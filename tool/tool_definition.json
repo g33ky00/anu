@@ -1,0 +1,22 @@
+{
+  "name": "anu",
+  "trigger": "/anu",
+  "description": "Lance le pipeline ANU Mind (4 passes structurées : génération, audit, correction, validation) sur un sujet. Retourne une réponse de haute qualité avec score d'audit et traçabilité complète. Utilise automatiquement le modèle configuré dans Hermes.",
+  "entry_point": "tool/anu_tool.py",
+  "execution": "python3",
+  "args_passthrough": true,
+  "requires_toolsets": ["code_execution", "file", "memory"],
+  "modes": {
+    "1": "ARCHITECT",
+    "2": "CODER",
+    "3": "TEACHER",
+    "4": "PROTOCOL",
+    "5": "AUDITOR",
+    "6": "WRITER",
+    "7": "RESEARCHER"
+  },
+  "default_mode": 2,
+  "output_dir": "~/.hermes/profiles/<profile>/cron/output/anu/",
+  "log_level": "AUTONOMOUS",
+  "version": "1.0.0"
+}

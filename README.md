@@ -1,349 +1,272 @@
-Architecture ANU — Cartographie explicative + Manuel de fonctionnement
-1. Vue d’ensemble
-ANU Mind est un moteur de raisonnement structuré multi-passes, implémenté comme un skill Hermes autonome. Il n’a ni gateway dédiée, ni cronjob attaché ; il est exécuté à la demande par Hermes via execute_code en appelant scripts/engine.py.
-Principe fondamental : aucun composant ne contient de dépendance fournisseur codée en dur, aucune référence à Google/Gemini, aucun secret en clair dans le code ou les artefacts produits. Toute la stack LLM provient de Hermes : ~/.hermes/config.yaml + ~/.hermes/auth.json.
-2. Structure de fichiers
-anu_mind/
+# ANU Mind
+
+> Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.  
+> Déclenché via la slash command `/anu`, il améliore la qualité et la pertinence des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction → validation.
+
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
+[![Hermes Skill](https://img.shields.io/badge/Hermes-Skill-purple)]()
+[![Status](https://img.shields.io/badge/Status-ACTIF-brightgreen)]()
+[![License](https://img.shields.io/badge/License-MIT-lightgrey)]()
+
+---
+
+## Principe
+
+ANU n'est pas un modèle différent — c'est une **méthode d'utilisation structurée** du même LLM (Stepfun 3.7 flash via Hermes) en 4 étapes séquentielles et contrôlées.
+
+```
+Utilisateur : /anu <topic>
+                  │
+            ┌─────▼──────┐
+            │  P1 : GEN  │  Génération initiale (archétype choisi)
+            └─────┬──────┘
+            ┌─────▼──────┐
+            │  P2 : AUDIT│  Critique + scoring 5 dimensions (0-10)
+            └─────┬──────┘
+             score < 7 ?
+            ┌─────▼──────┐
+            │  P3 : FIX  │  Correction ciblée (si nécessaire)
+            └─────┬──────┘
+            ┌─────▼──────┐
+            │  P4 : VAL  │  Validation finale
+            └─────┬──────┘
+              Livraison p4.md
+```
+
+---
+
+## Structure du dépôt
+
+```
+anu/
+├── tool/
+│   ├── anu_tool.py          ← Implémentation slash command /anu
+│   ├── tool_definition.json ← Déclaration Hermes du tool
+│   └── README.md
 ├── scripts/
-│   └── engine.py                          # Moteur principal
+│   └── engine.py            ← Moteur 4-passes (544 lignes, stdlib only)
 ├── references/
-│   ├── modes.md                           # Spécifications 7 archétypes
-│   ├── provider-backend.md                # Règles provider/backend
-│   ├── stepfun-nous-backend.md            # Quirks réponse Stepfun/Nous
-│   ├── nous-model-naming.md               # Règles nommage modèles Nous
-│   ├── run_passes-return-none-diagnosis.md # Diagnostic défaut retour
-│   └── ns-documentation.md                # Documentation NS
+│   ├── anu-slash-command.md ← Référence complète /anu
+│   ├── modes.md             ← Spécifications 7 archétypes
+│   ├── stepfun-nous-backend.md
+│   ├── nous-model-naming.md
+│   ├── provider-backend.md
+│   └── ns-documentation.md
 ├── templates/
-│   └── checkpoint_v1.json                 # Schéma checkpoint
-├── SKILL.md                               # Définition skill
-└── backups/
-    └── engine_YYYYMMDD_HHMMSS.bak         # Snapshots horodatés
-2.1 scripts/engine.py
-Fichier central. 544 lignes. Dépendances : Python stdlib uniquement (json, urllib, re, time, datetime, argparse, pathlib).
-Rôles par section :
-Section	Fonctions	Rôle
-AUTH/CONFIG	_load_config(), _load_auth(), _mask_token()	Lecture config/auth Hermes, masquage secrets
-TOKEN MGMT	_refresh_access_token()	Rafraîchissement OAuth2 sur 401/403
-HTTP	_http_json()	Client POST JSON avec timeout
-LLM BACKEND	_resolved_model(), _resolved_base_url(), _llm_backend(), llm_generate()	Résolution modèle, appel LLM, extraction réponse
-WORKFLOW	run_passes(), write_checkpoint_atomic(), log_autonomous()	Orchestration 4 passes, écriture checkpoints
-CLI	main()	Point d’entrée argparse
-UTILS	scrub_secrets(), prompt_hash(), compute_score(), make_run_dir()	Nettoyage, hashing, scoring, création répertoire
-2.2 references/modes.md
-Déclare les 7 archétypes ANU. Chaque entrée contient :
-id : 1 à 7
-nom : ARCHITECT, CODER, TEACHER, PROTOCOL, AUDITOR, WRITER, RESEARCHER
-temperature : 0.0 à 0.8
-max_output_tokens : 1000 ou 8192
-axes de sortie : formats autorisés
-Le mode 2 (CODER) est le fallback si l’archétype demandé n’existe pas.
-2.3 templates/checkpoint_v1.json
-Schéma JSON de checkpoint par passe :
-{
-  "$schema": "checkpoint_v1",
-  "run_id": "20260101_120000",
-  "pass_id": "p1",
-  "mode_id": 2,
-  "topic": "Sujet ANU",
-  "input_file": null,
-  "output_file": "p1.md",
-  "metrics": {
-    "tokens_in": 0,
-    "tokens_out": 0,
-    "wall_time_s": 0.0
-  },
-  "status": "completed",
-  "score": null,
-  "errors": []
-}
-score est rempli uniquement pour P2 (audit). Les dimensions sont : factualite, couverture, coherence, risques, clarte (0-10).
-2.4 Documentation de référence
-Document	Rôle
-provider-backend.md	Règles générales provider/backend
-stepfun-nous-backend.md	Endpoint, auth, quirk réponse Stepfun
-nous-model-naming.md	Règles de nommage de modèles pour Nous
-ns-documentation.md	Documentation NS complète
-run_passes-return-none-diagnosis.md	Diagnostic défaut retour
-3. Architecture logicielle
-3.1 Stack technique
-Langage : Python 3.13
-Runtime : stdlib uniquement, pas de dépendances externes
-Auth : héritée de Hermes (~/.hermes/auth.json)
-Config : héritée de Hermes (~/.hermes/config.yaml)
-Sortie : Markdown + JSON checkpoint
-Exécution : via Hermes execute_code ou CLI directe
-3.2 Flux d’exécution global
-UTILISATEUR
+│   └── checkpoint_v1.json   ← Schéma checkpoint par passe
+├── tests/
+│   ├── test_anu_tool.py     ← Tests unitaires (detect_mode, score)
+│   ├── test_engine_integration.py ← Tests intégration (skip si pas de LLM)
+│   └── conftest.py
+├── backups/                 ← Snapshots horodatés engine.py
+├── SKILL.md                 ← Définition skill Hermes
+└── README.md
+```
+
+---
+
+## Usage
+
+### Slash command (point d'entrée canonique)
+
+```
+/anu <topic>              # mode auto-détecté selon le sujet
+/anu <topic> --mode N     # archétype forcé (1-7)
+/anu --resume <run_id>    # reprise depuis dernier checkpoint valide
+/anu --status             # liste 10 derniers runs
+/anu --help               # aide
+```
+
+### Exemples
+
+```
+/anu analyse la stack réseau Proxmox
+/anu implémente un rate limiter Python --mode 2
+/anu sécurité SSH — hardening VM Debian --mode 5
+/anu --resume 20260718_143022
+/anu --status
+```
+
+### Progression en temps réel
+
+```
+[ANU | ARCHITECT] P1 génération...
+[ANU | ARCHITECT] P1 ✅
+[ANU | ARCHITECT] P2 audit...
+[ANU | ARCHITECT] P2 score: 7.8/10
+[ANU | ARCHITECT] P3 skipped (score OK)
+[ANU | ARCHITECT] P4 validation... ✅
+[ANU] Terminé en 47s — run_id: 20260718_143022
+```
+
+---
+
+## Archétypes (7 modes)
+
+| ID | Nom | Domaine | Température |
+|---|---|---|---|
+| 1 | ARCHITECT | Architecture, infrastructure, design | basse |
+| 2 | CODER | Code, debug, scripts (**défaut**) | basse |
+| 3 | TEACHER | Documentation, tutoriels, explications | moyenne |
+| 4 | PROTOCOL | Procédures, specs, workflows | très basse |
+| 5 | AUDITOR | Sécurité, audit, risques | très basse |
+| 6 | WRITER | Rédaction, rapports, synthèses | haute |
+| 7 | RESEARCHER | Recherche, comparaisons, faits | basse |
+
+Détail complet : `references/modes.md`
+
+---
+
+## Score P2 — Dimensions d'audit
+
+| Dimension | Description |
+|---|---|
+| `factualite` | Exactitude des faits (0-10) |
+| `couverture` | Exhaustivité du traitement (0-10) |
+| `coherence` | Cohérence logique interne (0-10) |
+| `risques` | Identification des risques ou angles manquants (0-10) |
+| `clarte` | Clarté et lisibilité (0-10) |
+
+Si la moyenne < 7.0 ou si une dimension est `critical_low` → P3 (correction) est déclenchée automatiquement.
+
+---
+
+## Architecture technique
+
+### `tool/anu_tool.py`
+
+Implémentation de la slash command `/anu` :
+
+- `main()` — point d'entrée, parsing args, routage
+- `detect_mode(topic)` — mapping topic → archétype par mots-clés
+- `check_prerequisites()` — vérifie que `engine.py` est accessible
+- `run_pipeline(topic, mode_id, run_id)` — orchestre P1→P2→P3?→P4
+- `cmd_resume(run_id, ...)` — reprise depuis dernier checkpoint valide
+- `cmd_status()` — liste des 10 derniers runs
+- `deliver(result)` — lecture et affichage de `p4.md`
+- `_log_autonomous(msg)` — journalisation dans `hermes_YYYY-MM-DD.log`
+
+### `scripts/engine.py`
+
+Moteur bas niveau (544 lignes, stdlib uniquement) :
+
+- Authentification OAuth2 Hermes (`auth.json` + `config.yaml`)
+- Résolution modèle/endpoint (`_resolved_model`, `_resolved_base_url`)
+- Appel LLM avec extraction `content → reasoning → reasoning_details`
+- Écriture atomique des checkpoints (write + rename)
+- Calcul score P2 par dimension
+- Refresh token automatique sur 401/403
+
+### Flux de données
+
+```
+/anu topic --mode N
     │
-    ▼
-HERMES (execute_code)
+    ├── anu_tool.py : detect_mode() → run_id
     │
-    ├── import engine.py
-    ├── make_run_dir() → run_id
-    ├── run_passes(run_dir, args)
-    │       │
-    │       ├── Validation mode_id
-    │       ├── Détermination start_pass (auto pour p1)
-    │       ├── BOUCLE while True :
-    │       │   ├── Sélection mode archétype
-    │       │   ├── Résolution entrée (topic ou fichier précédent)
-    │       │   ├── llm_generate(model="auto", ...)
-    │       │   │       │
-    │       │   │       ├── _resolved_model("auto")
-    │       │   │       │   └── config.yaml → model.default : stepfun/step-3.7-flash:free
-    │       │   │       ├── _resolved_base_url()
-    │       │   │       │   └── auth.json → inference_base_url : https://inference-api.nousresearch.com/v1
-    │       │   │       ├── _load_auth() → access_token
-    │       │   │       ├── _refresh_access_token() si expiré
-    │       │   │       ├── _http_json(POST /chat/completions)
-    │       │   │       └── Extraction : content → reasoning → reasoning_details[*].text
-    │       │   │
-    │       │   ├── Écriture p<pass>.md
-    │       │   ├── Écriture p<pass>.json (checkpoint)
-    │       │   ├── Si p2 : calcul score dimensions
-    │       │   ├── Transition p1→p2→p3→p4
-    │       │   └── break après p4
-    │       │
-    │       └── RETURN result (dict)
+    ├── engine.run_passes(run_dir, args_p1)   → p1.md + p1.json
+    ├── engine.run_passes(run_dir, args_p2)   → p2.md + p2.json (score)
+    ├── [engine.run_passes(run_dir, args_p3)] → p3.md + p3.json (si score < 7)
+    ├── engine.run_passes(run_dir, args_p4)   → p4.md + p4.json
     │
-    └── Livraison résultat à l'utilisateur
-4. Méthodes de déclaration des composants
-4.1 _load_config()
-Déclaration : parseur YAML manuel, pas de dépendance PyYAML.
-Entrée : ~/.hermes/config.yaml
-Sortie : Dict[str, Any] avec clés :
-provider : provider actif (ex: nous)
-default_model : slug modèle par défaut (ex: stepfun/step-3.7-flash:free)
-base_url : URL base optionnelle
-api_key : clé API optionnelle
-Méthode : lecture ligne par ligne, détection bloc model:, extraction clés provider, default, base_url, api_key. Gestion indentations YAML variables.
-Contrat : retourne un dict vide si fichier absent ou invalide.
-4.2 _load_auth()
-Déclaration : parseur JSON.
-Entrée : ~/.hermes/auth.json
-Sortie : Dict[str, Any] normalisé :
-active_provider : provider actif
-access_token : token d’accès
-refresh_token : token de rafraîchissement
-client_id : ID client OAuth
-token_type : Bearer
-portal_base_url : URL portail Nous
-inference_base_url : URL endpoint inférence
-agent_key : clé agent optionnelle
-Méthode : lecture JSON → extraction providers.<active_provider> ou providers.nous → cache global _AUTH_CACHE.
-4.3 _resolved_model()
-Déclaration : resolveur de slug modèle.
-Signature : _resolved_model(model: str) -> str
-Comportement :
-model != "auto" → retour direct
-model == "auto" → lecture config.yaml → model.default, fallback stepfun/step-3.7-flash:free
-Contrat critique : ne tronque pas le suffixe :free. Le suffixe est autorisé et nécessaire pour le plan gratuit Nous.
-4.4 _resolved_base_url()
-Déclaration : constructeur d’URL endpoint.
-Signature : _resolved_base_url() -> str
-Comportement :
-Si config.yaml → base_url présent → utilisation directe + /chat/completions
-Sinon → auth.json → inference_base_url + /chat/completions
-Sortie : URL complète vers endpoint /chat/completions.
-4.5 _refresh_access_token()
-Déclaration : client OAuth2 refresh.
-Signature : _refresh_access_token() -> Dict[str, Any]
-Entrée : auth.json (refresh_token, client_id, portal_base_url)
-Sortie :
-{"ok": True, "access_token": ..., "expires_at": ..., ...}
-{"ok": False, "error": "..."}
-Méthode : POST {portal_base_url}/oauth2/token avec formulaire URL-encodé.
-4.6 _http_json()
-Déclaration : client HTTP générique.
-Signature : _http_json(url, payload, headers, timeout=60) -> Dict[str, Any]
-Comportement :
-POST JSON
-Succès → parse JSON body
-HTTPError → retour {"__http_error__": True, "status": code, "reason": ..., "body": ...}
-4.7 _llm_backend()
-Déclaration : orchestrateur LLM.
-Signature : _llm_backend(model, user_prompt, system_instruction, max_tokens, temperature) -> str
-Comportement :
-Lecture auth + résolution modèle + URL
-Construction payload OpenAI-compatible
-Vérification expiration token → refresh si nécessaire
-Appel _http_json()
-Si 401/403 → refresh + nouvel appel
-Extraction texte depuis choices[0].message
-Retour texte ou [LLM ERROR]
-4.8 llm_generate()
-Déclaration : interface publique.
-Signature : llm_generate(model, user_prompt, system_instruction, max_tokens, temperature) -> str
-Comportement : délègue à _llm_backend().
-Convention d’appel : model="auto" pour résolution depuis config.
-4.9 run_passes()
-Déclaration : workflow principal.
-Signature : run_passes(run_dir: Path, args: argparse.Namespace) -> Dict[str, Any]
-Structure interne :
-Début
-├── Initialisation result = {"status": "pending", ...}
-├── Validation mode_id ∈ MODES
-├── Validation start_pass
-├── Si start_pass != "p1" : vérification checkpoints précédents
-├── Détermination cible départ (p1/p2/p3/p4 auto)
-│
-├── BOUCLE while True :
-│   ├── Sélection mode = MODES[mode_id]
-│   ├── Construction ck (status="running")
-│   ├── Résolution entrée
-│   ├── llm_generate(model="auto", ...)
-│   ├── text = scrub_secrets(raw)
-│   ├── Écriture p<pass>.md
-│   ├── Calcul métriques (tokens_in, tokens_out, wall_time_s)
-│   ├── Si p2 : calcul score dimensions
-│   │   ├── mean >= seuil et pas critical_low → status="completed"
-│   │   ├── hash identique → status="failed"
-│   │   └── sinon → status="needs_correction"
-│   ├── Sinon → status="completed"
-│   ├── Mise à jour result depuis ck
-│   ├── Écriture checkpoint atomique
-│   ├── Log AUTONOMOUS
-│   ├── Si needs_correction et max tentatives atteint → break
-│   ├── Si needs_correction → target_pass="p3", continue
-│   ├── Si p3 → target_pass="p4", continue
-│   └── Sinon → break
-│
-├── Construction manifest (.manifest.json)
-├── result["status"] = completed si pending
-└── RETURN result
-Retour : dictionnaire avec clés :
-status : completed, failed, needs_correction
-last_pass : p1, p2, p3 ou p4
-output_file : chemin Markdown de la dernière passe
-errors : liste d’erreurs
-metrics : tokens_in, tokens_out, wall_time_s
-4.10 write_checkpoint_atomic()
-Déclaration : écriture atomique JSON.
-Comportement : écriture fichier via écriture temporaire + rename pour éviter corruption.
-4.11 log_autonomous()
-Déclaration : journalisation niveau AUTONOMOUS.
-Comportement : écrit dans ~/.hermes/profiles/dev/logs/hermes_YYYY-MM-DD.log.
-5. Méthodes d’appel
-5.1 Appel depuis Hermes
-from pathlib import Path
-from importlib.util import spec_from_file_location, module_from_spec
-import argparse
+    └── deliver(result) → affichage p4.md + résumé
+```
 
-# Chargement module
-spec = spec_from_file_location('engine', '/path/to/engine.py')
-engine = module_from_spec(spec)
-spec.loader.exec_module(engine)
+---
 
-# Création run
-run_id = engine.make_run_dir().name
+## Intégration dans Hermes
 
-# Exécution
-result = engine.run_passes(
-    Path('/path/to/runs') / run_id,
-    argparse.Namespace(
-        topic='Sujet ANU',
-        mode=7,
-        pass_id='p1',
-        input=None,
-        run_id=run_id,
-    ),
-)
+### Installation
 
-# Accès résultat
-print(result['status'], result['last_pass'], result['output_file'])
-Important : l’appel via CLI (python engine.py --topic ... --mode ... --pass ... --run-id ...) écrit les fichiers mais n’imprime pas le résultat structuré. L’appel programmatique retourne le dict complet.
-5.2 Appel CLI
-python3 engine.py --topic "Sujet" --mode 7 --pass p1 --run-id 20260701_165041
-Sortie : manifest JSON sur stdout.
-6. Contrat API Stepfun/Nous
-6.1 Endpoint
-POST https://inference-api.nousresearch.com/v1/chat/completions
-6.2 Authentification
-Authorization: Bearer <access_token>
-Content-Type: application/json
-Token rafraîchi automatiquement sur 401/403 via OAuth2 refresh.
-6.3 Payload
-{
-  "model": "stepfun/step-3.7-flash:free",
-  "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-  ],
-  "max_tokens": 8192,
-  "temperature": 0.2
-}
-6.4 Réponse (format confirmé live)
-{
-  "id": "gen-...",
-  "model": "stepfun/step-3.7-flash-20260528:free",
-  "provider": "StepFun",
-  "choices": [{
-    "message": {
-      "content": null,
-      "reasoning": "Texte utile...",
-      "reasoning_details": [{
-        "type": "reasoning.text",
-        "text": "Texte utile..."
-      }]
-    }
-  }]
-}
-6.5 Extraction de texte
-Ordre dans engine.py :
-message.content
-message.reasoning
-message.reasoning_details[*].text où type == "reasoning.text"
-6.6 Modèles valides
-Plan gratuit : stepfun/step-3.7-flash:free
-Plan payant : stepfun/step-3.7-flash
-Règle : préfixe vendor/model obligatoire, suffixe :free autorisé
-7. Gestion des erreurs
-7.1 Niveaux d’erreur
-Code/Signal	Comportement
-HTTP 404 modèle	Retour [LLM ERROR] HTTP 404: ...
-HTTP 401/403	Refresh token + nouvel appel. Si échec → arrêt définitif
-Timeout >60s	Retour [LLM ERROR] HTTP ...: Timeout
-Réponse sans choix	Retour [LLM ERROR]
-Exception dans workflow	Checkpoint status: failed, errors peuplé
-7.2 Circuit breaker
-Pas de retry automatique sur 401/403 après échec du refresh
-Arrêt propre avec checkpoint d’erreur
-8. Sécurité
-8.1 Secrets
-Aucun token en clair dans engine.py, SKILL.md ou les docs de référence
-Masquage via _mask_token() : format sk-****...xxxx
-Chemins auth/config référencés, jamais contenus
-8.2 Injections
-Pas d’input() dans engine.py
-Entrées utilisateur : --topic et --input uniquement
-Pas d’eval(), exec(), subprocess
-Checkpoints JSON validés par schéma implicite
-8.3 Validation webhooks (hors scope ANU)
-Gérée par Hermes, pas par ANU.
-9. Logs et observabilité
-Fichier	Contenu	Niveau
-~/.hermes/profiles/dev/logs/hermes_YYYY-MM-DD.log	Sessions ANU	AUTONOMOUS
-<run_id>/p*.json	Checkpoints par passe	N/A (fichiers)
-<run_id>/.manifest.json	Agrégat passes	N/A (fichiers)
-10. Tests et vérifications
-Test	Résultat
-py_compile engine.py	✅
-Import + 7 modes	✅
-_resolved_model('auto')	✅ stepfun/step-3.7-flash:free
-_resolved_base_url()	✅ .../v1/chat/completions
-llm_generate() backend	✅ HTTP 200
-Extraction réponse Stepfun	✅ Confirmé live
-Modes 1-7	✅ status: completed
-Zéro ref Google/Gemini	✅
-run_passes() retour dict	✅
-11. Gouvernance
-Versioning : manuel via SKILL.md frontmatter
-Backups : backups/engine_YYYYMMDD_HHMMSS.bak avant modification critique
-Commits : aucun automatique dans ce skill
-Documentation : ns-documentation.md pour les bonnes pratiques NS
-12. Points de vigilance
-Dépendance Hermes : ANU ne fonctionne pas sans Hermes configuré
-Suffixe :free : ne pas le tronquer, il est nécessaire pour le plan gratuit
-Rate limit : nous_rate_guard peut skipp ANU temporairement
-Modèle recommandé : ANU utilise le modèle configuré, pas le Portal /api/nous/recommended-models
-Documentation NS hors ligne : doc officielle Nous inaccessible, règles dérivées du code Hermes + live API
+```bash
+# Copier dans le répertoire skills Hermes
+cp -r . ~/.hermes/skills/autonomous-ai-agents/anu-mind/
+
+# Vérifier que le tool est détecté
+hermes tools list | grep anu
+```
+
+### SOUL.md — Section à ajouter dans les directives Hermes
+
+```
+## Tool /anu — ANU Mind
+
+/anu est le seul point d'entrée du pipeline ANU.
+Ne jamais appeler engine.py directement sans passer par /anu.
+Ne jamais déclencher ANU sans invocation explicite /anu.
+
+En cas d'erreur LLM pendant un run : checkpoint sur la dernière passe
+réussie, notifier l'utilisateur, proposer --resume <run_id>.
+```
+
+### Répertoire de sortie
+
+```
+~/.hermes/profiles/<profile>/cron/output/anu/<run_id>/
+├── p1.md / p1.json
+├── p2.md / p2.json
+├── p3.md / p3.json   (si correction)
+├── p4.md / p4.json   ← livrable principal
+└── .manifest.json
+```
+
+---
+
+## Tests
+
+```bash
+# Tests unitaires (sans LLM)
+python3 -m pytest tests/test_anu_tool.py -v
+
+# Tests d'intégration (nécessitent un backend LLM actif)
+python3 -m pytest tests/test_engine_integration.py -m integration -v
+
+# Tous les tests
+python3 -m pytest -v
+```
+
+---
+
+## Sécurité
+
+- Aucun token/secret en clair dans le code, les checkpoints ou les logs
+- `scrub_secrets()` appliqué sur toute sortie LLM avant écriture disque
+- Pas d'`eval()`, `exec()`, `subprocess` avec input utilisateur
+- Inputs : `topic` et `--mode` uniquement
+
+---
+
+## Changelog
+
+### v2.0.0 — Juillet 2026
+
+- **[arch]** Ajout slash command `/anu` (`tool/anu_tool.py` + `tool_definition.json`)
+- **[arch]** `engine.py` n'est plus invocable directement depuis une session Hermes
+- **[impl]** `detect_mode()` — mapping automatique topic → archétype
+- **[impl]** `run_pipeline()` — orchestration P1→P2→P3?→P4 avec score conditionnel
+- **[impl]** `cmd_resume()` — reprise depuis dernier checkpoint valide
+- **[impl]** `cmd_status()` — listing des runs récents
+- **[impl]** `_log_autonomous()` — journalisation AUTONOMOUS native
+- **[test]** `tests/test_anu_tool.py` — 9 tests unitaires (detect_mode, score)
+- **[test]** `tests/test_engine_integration.py` — tests intégration LLM
+- **[docs]** `references/anu-slash-command.md` — référence complète /anu
+- **[docs]** `SKILL.md` v2.0.0 — mis à jour, /anu comme point d'entrée canonique
+
+### v1.0.0 — Juin 2026
+
+- Pipeline 4 passes initial (`engine.py`)
+- 7 archétypes, checkpoints JSON, scoring P2
+- Intégration Hermes via `execute_code`
+
+---
+
+## Mainteneur
+
+**Pytheas Infrastructure** — Usage interne exclusif.  
+Architecture : **Claude (Anthropic)** via MCP GitHub.  
+Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
+
+<div align="center">
+  <sub>Composant de l'écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
+</div>
