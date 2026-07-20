@@ -2,7 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 ANU Mind CLI wrapper — Slash `/anu` triggers this binary.
-Orchestration: Python, argparse, calls engine.py internally.
+Orchestration: Python, argparse, calls engine.py via subprocess.
+
+Fixes v2.0.1:
+  - response.status (was resp.status — NameError, Telegram always failed)
+  - DEFAULT_RUN_ROOT / ENGINE_DEFAULT honour HERMES_PROFILE env var
+  - _resume() now resumes full pipeline from last completed pass
+  - _load_telegram_credentials() token never logged in clear
+  - token masked in all _log_line() calls
 """
 
 import argparse
@@ -21,14 +28,17 @@ from zoneinfo import ZoneInfo
 # PATHS / PROFILE
 # ---------------------------------------------------------------------------
 HOME = Path.home()
-DEFAULT_RUN_ROOT = HOME / ".hermes" / "profiles" / "dev" / "cron" / "output" / "anu"
-ENGINE_DEFAULT = HOME / ".hermes" / "profiles" / "dev" / "skills" / "anu_mind" / "scripts" / "engine.py"
+_PROFILE = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE", "dev")
+_HERMES_HOME = Path(os.environ.get("HERMES_HOME", str(HOME / ".hermes")))
+
+DEFAULT_RUN_ROOT = _HERMES_HOME / "profiles" / _PROFILE / "cron" / "output" / "anu"
+ENGINE_DEFAULT   = _HERMES_HOME / "profiles" / _PROFILE / "skills" / "anu_mind" / "scripts" / "engine.py"
+
 
 def _manifest_update(run_dir: Path, pass_data: dict) -> None:
-    hermes_home = Path(os.environ.get("HERMES_HOME", "/home/g33ky/.hermes/profiles/dev"))
-    mf = run_dir.resolve().absolute() / ".manifest.json"
+    mf  = run_dir.resolve() / ".manifest.json"
     tmp = mf.with_suffix(".tmp")
-    data = {}
+    data: dict = {}
     if mf.exists():
         try:
             data = _read_json(mf)
@@ -39,8 +49,9 @@ def _manifest_update(run_dir: Path, pass_data: dict) -> None:
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(str(tmp), str(mf))
     except Exception as e:
-        _log_line(f"CRITICAL: Echec ecriture manifeste {run_dir.name}: {e}")
+        _log_line(f"CRITICAL: manifest write failed run_dir={run_dir.name}: {e}")
         raise
+
 
 MODES = {
     1: "ARCHITECT",
@@ -70,8 +81,8 @@ def _now_iso() -> str:
 
 
 def _log_line(msg: str) -> None:
-    day = datetime.now().strftime("%Y-%m-%d")
-    log_path = HOME / ".hermes" / "profiles" / "dev" / "logs" / f"hermes_{day}.log"
+    day      = datetime.now().strftime("%Y-%m-%d")
+    log_path = _HERMES_HOME / "profiles" / _PROFILE / "logs" / f"hermes_{day}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(f"[{_now_iso()}] [AUTONOMOUS] [anu_mind] {msg}\n")
@@ -94,10 +105,17 @@ def _read_md(path: Path) -> str:
 
 
 def _score_from_p2(path: Path) -> tuple[float, dict]:
-    data = _read_json(path)
+    data  = _read_json(path)
     score = data.get("score") or {}
-    mean = sum(score.values()) / len(score) if score else 0.0
+    mean  = sum(score.values()) / len(score) if score else 0.0
     return mean, score
+
+
+def _mask_token(token: str) -> str:
+    """Returns sk-****...xxxx pattern, never full token."""
+    if len(token) <= 8:
+        return "****"
+    return f"{token[:4]}****...{token[-4:]}"
 
 
 # ---------------------------------------------------------------------------
@@ -117,11 +135,17 @@ def _call_engine(args: list[str], cwd: Path | None = None) -> tuple[int, str, st
     return proc.returncode, proc.stdout, proc.stderr
 
 
-def _engine_pass(run_dir: Path, pass_id: str, topic: str, mode: int, input_file: Path | None = None) -> tuple[Path, dict]:
+def _engine_pass(
+    run_dir: Path,
+    pass_id: str,
+    topic: str,
+    mode: int,
+    input_file: Path | None = None,
+) -> tuple[Path, dict]:
     args = [
         "--topic", topic,
-        "--mode", str(mode),
-        "--pass", pass_id,
+        "--mode",  str(mode),
+        "--pass",  pass_id,
         "--run-id", run_dir.name,
     ]
     if input_file:
@@ -134,55 +158,73 @@ def _engine_pass(run_dir: Path, pass_id: str, topic: str, mode: int, input_file:
 
 
 # ---------------------------------------------------------------------------
-# TELEGRAM CALLBACK
+# TELEGRAM
 # ---------------------------------------------------------------------------
 
 def _load_telegram_credentials() -> tuple[str, str | None]:
-    # 1) Env vars
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    """Returns (bot_token, chat_id). Token is never logged."""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id   = os.getenv("TELEGRAM_CHAT_ID")
     if bot_token:
         return bot_token, chat_id
-    # 2) ~/.hermes/auth.json
-    auth_path = Path("/home/g33ky/.hermes/auth.json")
+
+    # auth.json
+    auth_path = _HERMES_HOME / "auth.json"
     if auth_path.exists():
         try:
-            data = json.loads(auth_path.read_text(encoding="utf-8"))
+            data      = json.loads(auth_path.read_text(encoding="utf-8"))
             providers = data.get("providers", {}) if isinstance(data, dict) else {}
-            for name in ("telegram", "tg", "openrouter"):
+            for name in ("telegram", "tg"):
                 item = providers.get(name)
                 if isinstance(item, dict):
-                    tk = item.get("access_token") or item.get("bot_token") or item.get("token")
+                    tk = (
+                        item.get("access_token")
+                        or item.get("bot_token")
+                        or item.get("token")
+                    )
                     if tk:
                         chat_id = chat_id or item.get("chat_id") or item.get("admin_chat_id")
                         return tk, chat_id
         except Exception:
             pass
-    # 3) config.yaml shallow parse sensitive section only if clearly telegram block
-    config_path = HOME / ".hermes" / "config.yaml"
+
+    # config.yaml — shallow parse (token never appears in logs)
+    config_path = _HERMES_HOME / "config.yaml"
     if config_path.exists():
         txt = config_path.read_text(encoding="utf-8", errors="ignore")
-        m = re.search(r'telegram:.*?token: ["\']?([^"\'\n]+)', txt, re.S)
+        m = re.search(r"telegram:\s*\n(?:[^\n]*\n)*?\s*(?:bot_token|token):\s*[\"']?([^\"'\n]+)", txt)
         if m:
             return m.group(1).strip(), chat_id
+
     return "", chat_id
 
 
 def _telegram_push(text: str, chat_id: str | None = None) -> bool:
     token, default_chat = _load_telegram_credentials()
-    if not token or not chat_id:
+    if not token:
         _log_line("telegram_push_failed reason=credentials_missing")
         return False
     chat = chat_id or default_chat
     if not chat:
+        _log_line("telegram_push_failed reason=chat_id_missing")
         return False
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = json.dumps({"chat_id": chat, "text": text, "disable_web_page_preview": True}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
+    url     = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat,
+        "text": text,
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}
+    )
     try:
-        _log_line(f"telegram_push_start chat_id={chat}")
+        _log_line(f"telegram_push_start chat_id={chat} token={_mask_token(token)}")
         with urllib.request.urlopen(req, timeout=15) as response:
-            return resp.status == 200
+            ok = response.status == 200  # FIX: was resp.status — NameError
+            if not ok:
+                _log_line(f"telegram_push_failed http_status={response.status}")
+            return ok
     except Exception as e:
         _log_line(f"telegram_push_failed error={e!r}")
         return False
@@ -209,22 +251,30 @@ def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _exec_detached(run_dir: Path, topic: str, mode: int) -> None:
-    script = str(Path(__file__).resolve())
+    script      = str(Path(__file__).resolve())
     xdg_runtime = f"/run/user/{os.getuid()}"
-    env = os.environ.copy()
-    env["XDG_RUNTIME_DIR"] = xdg_runtime
+    env         = os.environ.copy()
+    env["XDG_RUNTIME_DIR"]       = xdg_runtime
     env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={xdg_runtime}/bus"
-    env["HERMES_HOME"] = os.environ.get("HERMES_HOME", "/home/g33ky/.hermes/profiles/dev")
-    env["PROFILE"] = os.environ.get("PROFILE", "dev")
-    env["HOME"] = "/home/g33ky"
-    env["USER"] = "g33ky"
+    env["HERMES_HOME"]           = str(_HERMES_HOME)
+    env["HERMES_PROFILE"]        = _PROFILE
+    env["HOME"]                  = str(HOME)
+    env["USER"]                  = os.environ.get("USER", HOME.name)
     cmd = [
-        "systemd-run", "--user", "--unit", f"anu-run-{run_dir.name}",
+        "systemd-run", "--user",
+        "--unit",    f"anu-run-{run_dir.name}",
         "--collect",
         sys.executable, script,
-        "--parent", "--topic", topic, "--mode", str(mode), "--run-id", run_dir.name,
+        "--parent",
+        "--topic",  topic,
+        "--mode",   str(mode),
+        "--run-id", run_dir.name,
     ]
-    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, close_fds=True)
+    subprocess.Popen(
+        cmd, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+        close_fds=True,
+    )
 
 
 def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
@@ -232,25 +282,42 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
     try:
         summary = _run_pipeline(run_dir, topic, mode)
     except Exception as exc:
-        msg = f"\U0001f6a8 [ANU - ERREUR FATALE] Echec sur la passe externe. Reprise possible via : /anu --resume {run_id}\nErreur: {exc!r}"
+        msg = (
+            f"\U0001f6a8 [ANU - ERREUR FATALE] Échec pipeline.\n"
+            f"Reprise : /anu --resume {run_id}\nErreur : {exc!r}"
+        )
         _telegram_push(msg)
-        _log_line(f"run_failed push run_id={run_id} error={exc!r}")
+        _log_line(f"run_failed run_id={run_id} error={exc!r}")
         return
+
     p2_mean = (summary.get("p2") or {}).get("mean") or 0.0
-    passes_count = sum(1 for p in ["p1", "p2", "p3", "p4"] if summary.get(p) and summary[p].get("status") != "skipped")
+    passes_count = sum(
+        1 for p in ["p1", "p2", "p3", "p4"]
+        if summary.get(p) and summary[p].get("status") != "skipped"
+    )
     p4_md = run_dir / "p4.md"
     if not p4_md.exists():
-        msg = f"\U0001f6a8 [ANU - ERREUR FATALE] Livrable p4.md manquant. Reprise possible via : /anu --resume {run_id}"
+        msg = (
+            f"\U0001f6a8 [ANU - ERREUR FATALE] Livrable p4.md manquant.\n"
+            f"Reprise : /anu --resume {run_id}"
+        )
         _telegram_push(msg)
-        _log_line(f"run_failed missing p4 run_id={run_id}")
+        _log_line(f"run_failed missing_p4 run_id={run_id}")
         return
+
     content = _read_md(p4_md)
-    header = f"[ANU | {MODES[mode]} | Run {run_id} | Score P2: {p2_mean:.1f}/10]\n"
-    chunks = _split_for_telegram(header + content)
+    header  = f"[ANU | {MODES[mode]} | Run {run_id} | Score P2: {p2_mean:.1f}/10]\n"
+    chunks  = _split_for_telegram(header + content)
     for i, chunk in enumerate(chunks):
         sent = _telegram_push(chunk)
-        _log_line(f"telegram_push run_id={run_id} part={i+1}/{len(chunks)} status={'ok' if sent else 'failed'}")
-    _log_line(f"run_completed run_id={run_id} mode={mode} score_p2={p2_mean} passes={passes_count}")
+        _log_line(
+            f"telegram_push run_id={run_id} "
+            f"part={i+1}/{len(chunks)} status={'ok' if sent else 'failed'}"
+        )
+    _log_line(
+        f"run_completed run_id={run_id} mode={mode} "
+        f"score_p2={p2_mean} passes={passes_count}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,42 +329,51 @@ def _detect_mode(topic: str) -> int:
     for mid, keywords in MODE_KEYWORDS.items():
         if any(k in t for k in keywords):
             return mid
-    return 2
+    return 2  # CODER fallback
 
 
 def _run_pipeline(run_dir: Path, topic: str, mode: int) -> dict:
-    summary = {"p1": None, "p2": None, "p3": None, "p4": None}
+    summary: dict = {"p1": None, "p2": None, "p3": None, "p4": None}
 
+    # P1
     _info(f"[ANU | {MODES[mode]}] P1 génération... ⏳")
     p1_md, p1_ck = _engine_pass(run_dir, "p1", topic, mode)
     summary["p1"] = {"status": p1_ck.get("status"), "file": "p1.md"}
-    _manifest_update(run_dir, {"p1": {"status": p1_ck.get("status"), "file": "p1.md"}})
+    _manifest_update(run_dir, {"p1": summary["p1"]})
     _info(f"[ANU | {MODES[mode]}] P1 ✅")
 
+    # P2
     _info(f"[ANU | {MODES[mode]}] P2 audit... ⏳")
     p2_md, p2_ck = _engine_pass(run_dir, "p2", topic, mode, input_file=p1_md)
-    mean, score = _score_from_p2(run_dir / "p2.json")
+    mean, score  = _score_from_p2(run_dir / "p2.json")
     summary["p2"] = {"status": p2_ck.get("status"), "file": "p2.md", "score": score, "mean": mean}
-    _manifest_update(run_dir, {"p2": {"status": p2_ck.get("status"), "file": "p2.md", "score": score, "mean": mean}})
-    _info(f"[ANU | {MODES[mode]}] P2 score: {mean:.1f}/10 ✅")
+    _manifest_update(run_dir, {"p2": summary["p2"]})
+    _info(f"[ANU | {MODES[mode]}] P2 score: {mean:.1f}/10")
 
-    last_input = p2_md
-    if mean < 7.0 or any((score.get(d, 10) or 10) < 5 for d in ["factualite", "couverture", "coherence", "risques", "clarte"]):
+    # P3 conditionnel
+    CRITICAL_LOW = 5
+    needs_p3 = mean < 7.0 or any(
+        (score.get(d) or 10) < CRITICAL_LOW
+        for d in ["factualite", "couverture", "coherence", "risques", "clarte"]
+    )
+    if needs_p3:
         _info(f"[ANU | {MODES[mode]}] P3 correction... ⏳")
-        p3_md, p3_ck = _engine_pass(run_dir, "p3", topic, mode, input_file=last_input)
+        p3_md, p3_ck = _engine_pass(run_dir, "p3", topic, mode, input_file=p2_md)
         summary["p3"] = {"status": p3_ck.get("status"), "file": "p3.md"}
-        _manifest_update(run_dir, {"p3": {"status": p3_ck.get("status"), "file": "p3.md"}})
+        _manifest_update(run_dir, {"p3": summary["p3"]})
         _info(f"[ANU | {MODES[mode]}] P3 ✅")
         last_input = p3_md
     else:
         _info(f"[ANU | {MODES[mode]}] P3 skipped (score OK)")
         summary["p3"] = {"status": "skipped", "file": None}
-        _manifest_update(run_dir, {"p3": {"status": "skipped", "file": None}})
+        _manifest_update(run_dir, {"p3": summary["p3"]})
+        last_input = p2_md
 
+    # P4
     _info(f"[ANU | {MODES[mode]}] P4 validation... ⏳")
-    p4_md, p4_ck = _engine_pass(run_dir, "p4", topic, mode, input_file=last_input)
+    _, p4_ck = _engine_pass(run_dir, "p4", topic, mode, input_file=last_input)
     summary["p4"] = {"status": p4_ck.get("status"), "file": "p4.md"}
-    _manifest_update(run_dir, {"p4": {"status": p4_ck.get("status"), "file": "p4.md"}})
+    _manifest_update(run_dir, {"p4": summary["p4"]})
     _info(f"[ANU | {MODES[mode]}] P4 ✅")
 
     return summary
@@ -309,17 +385,15 @@ def _run_pipeline(run_dir: Path, topic: str, mode: int) -> dict:
 
 def _print_help() -> None:
     print(
-        "Usage: anu <topic> [--mode N] [--resume RUN_ID] [--status] [--detach]\n"
-        "\n"
+        "Usage: anu <topic> [--mode N] [--resume RUN_ID] [--status] [--detach]\n\n"
         "Modes:\n"
-        + "\n".join([f"  {k}  {v}" for k, v in MODES.items()])
-        + "\n\n"
-        "Examples:\n"
+        + "\n".join(f"  {k}  {v}" for k, v in MODES.items())
+        + "\n\nExemples:\n"
         "  anu \"audit SSH\" --mode 5\n"
         "  anu \"refactor parser.py\" --mode 2\n"
         "  anu --status\n"
         "  anu --resume 20260718_143022\n"
-        "  anu \"Résumé BGP\" --mode 2 --detach\n"
+        "  anu \"Résumé BGP\" --mode 1 --detach\n"
     )
 
 
@@ -337,43 +411,114 @@ def _status(run_root: Path) -> None:
         except Exception:
             continue
         passes = data.get("passes", {})
-        p4 = passes.get("p4", {})
-        rows.append((rd.name, p4.get("status", "incomplete"), p4.get("output_file")))
+        p4     = passes.get("p4", {})
+        p2m    = (passes.get("p2") or {}).get("mean", 0.0)
+        rows.append((rd.name, p4.get("status", "incomplete"), p2m))
     if not rows:
         print("No ANU runs.")
         return
-    print("run_id            p4_status      last_file")
-    for row in rows:
-        print(f"{row[0]:<16} {str(row[1]):<13} {str(row[2] or ''):<10}")
+    print(f"{'run_id':<22} {'p4_status':<14} {'score_p2'}")
+    print("-" * 48)
+    for name, status, score in rows:
+        print(f"{name:<22} {str(status):<14} {score:.1f}")
 
 
 def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
+    """
+    Reprend le pipeline complet depuis la première passe non complétée.
+    FIX v2.0.1: exécution de toutes les passes manquantes (pas seulement la suivante).
+    """
     rd = run_root / run_id
     if not rd.exists():
         print(f"Run not found: {run_id}")
         raise SystemExit(1)
-    manifest_path = rd / ".manifest.json"
-    if manifest_path.exists():
-        manifest = _read_json(manifest_path)
-        passed = sorted(manifest.get("passes", {}).keys())
-    else:
-        passed = sorted([p.name.replace(".json", "") for p in rd.glob("*.json")])
-    if not passed:
-        print("No checkpoint to resume from.")
-        raise SystemExit(1)
-    last = passed[-1]
-    print(f"Resuming from {last}...")
-    if last not in {"p1", "p2", "p3"}:
-        print("Nothing to resume beyond p4.")
-        return
-    ck = _read_json(rd / f"{last}.json")
-    topic = topic_hint or ck.get("topic") or input("Topic> ").strip()
+
+    # Déterminer les passes complétées depuis le manifest
+    completed: set[str] = set()
+    mf = rd / ".manifest.json"
+    if mf.exists():
+        try:
+            passes = _read_json(mf).get("passes", {})
+            completed = {
+                p for p, v in passes.items()
+                if isinstance(v, dict) and v.get("status") in ("completed", "skipped")
+            }
+        except Exception:
+            pass
+    # Fallback sur les .json présents
+    if not completed:
+        completed = {f.stem for f in rd.glob("*.json") if not f.name.startswith(".")}
+
+    # Récupérer topic + mode depuis le dernier checkpoint disponible
+    topic = topic_hint
+    mode  = 2
+    for p in ["p1", "p2", "p3", "p4"]:
+        ck_path = rd / f"{p}.json"
+        if ck_path.exists():
+            try:
+                ck    = _read_json(ck_path)
+                topic = topic or ck.get("topic")
+                mode  = int(ck.get("mode_id") or 2)
+            except Exception:
+                pass
+
+    if not topic:
+        topic = input("Topic > ").strip()
     if not topic:
         raise SystemExit("Missing topic.")
-    mode = int(ck.get("mode_id") or 2)
-    _engine_pass(rd, last, topic, mode)
-    if last == "p1":
-        print("Resumed p1. Next: rerun resume for p2.")
+
+    if {"p1", "p2", "p4"} <= completed:
+        print(f"Run {run_id} already complete (P4 done).")
+        return
+
+    print(f"[ANU] Reprise run={run_id} complétées={sorted(completed)} mode={mode}")
+    _log_line(f"run_resume run_id={run_id} completed={sorted(completed)} mode={mode}")
+
+    # Relancer depuis la première passe non complétée
+    # On reconstruit le pipeline en passant les passes déjà faites
+    p1_md = rd / "p1.md"
+    p2_md = rd / "p2.md"
+    p3_md = rd / "p3.md"
+
+    if "p1" not in completed:
+        _info(f"[ANU | {MODES[mode]}] P1 génération... ⏳")
+        p1_md, p1_ck = _engine_pass(rd, "p1", topic, mode)
+        _manifest_update(rd, {"p1": {"status": p1_ck.get("status"), "file": "p1.md"}})
+        _info(f"[ANU | {MODES[mode]}] P1 ✅")
+
+    if "p2" not in completed:
+        _info(f"[ANU | {MODES[mode]}] P2 audit... ⏳")
+        p2_md, p2_ck = _engine_pass(rd, "p2", topic, mode, input_file=p1_md)
+        mean, score  = _score_from_p2(rd / "p2.json")
+        _manifest_update(rd, {"p2": {"status": p2_ck.get("status"), "file": "p2.md", "score": score, "mean": mean}})
+        _info(f"[ANU | {MODES[mode]}] P2 score: {mean:.1f}/10")
+    else:
+        mean, score = _score_from_p2(rd / "p2.json") if (rd / "p2.json").exists() else (0.0, {})
+
+    needs_p3 = mean < 7.0 or any((score.get(d) or 10) < 5 for d in ["factualite", "couverture", "coherence", "risques", "clarte"])
+    if needs_p3 and "p3" not in completed:
+        _info(f"[ANU | {MODES[mode]}] P3 correction... ⏳")
+        p3_md, p3_ck = _engine_pass(rd, "p3", topic, mode, input_file=p2_md)
+        _manifest_update(rd, {"p3": {"status": p3_ck.get("status"), "file": "p3.md"}})
+        _info(f"[ANU | {MODES[mode]}] P3 ✅")
+        last_input = p3_md
+    elif not needs_p3:
+        _manifest_update(rd, {"p3": {"status": "skipped", "file": None}})
+        last_input = p2_md
+    else:
+        last_input = p3_md if p3_md.exists() else p2_md
+
+    if "p4" not in completed:
+        _info(f"[ANU | {MODES[mode]}] P4 validation... ⏳")
+        _, p4_ck = _engine_pass(rd, "p4", topic, mode, input_file=last_input)
+        _manifest_update(rd, {"p4": {"status": p4_ck.get("status"), "file": "p4.md"}})
+        _info(f"[ANU | {MODES[mode]}] P4 ✅")
+
+    p4_md_path = rd / "p4.md"
+    if p4_md_path.exists():
+        _info("\n" + "=" * 40 + "\n[ANU] LIVRAISON (resumé)\n" + "=" * 40)
+        print(_read_md(p4_md_path))
+    _log_line(f"run_resume_completed run_id={run_id} mode={mode}")
 
 
 # ---------------------------------------------------------------------------
@@ -383,19 +528,17 @@ def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(prog="anu", add_help=False)
     parser.add_argument("topic", nargs="?", default=None)
-    parser.add_argument("--mode", type=int, default=None)
+    parser.add_argument("--mode",   type=int, default=None)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--detach", "-d", action="store_true")
-    parser.add_argument("--help", action="store_true")
+    parser.add_argument("--help",   action="store_true")
     args = parser.parse_args()
 
-    # Help/default display
-    if args.help or (not args.topic and not args.resume and not args.status and not args.detach):
+    if args.help or (not args.topic and not args.resume and not args.status):
         _print_help()
         return 0
 
-    # Meta commands
     if args.status:
         _status(DEFAULT_RUN_ROOT)
         return 0
@@ -404,29 +547,29 @@ def main() -> int:
         _resume(DEFAULT_RUN_ROOT, args.resume, topic_hint=args.topic)
         return 0
 
-    if args.detach and not args.topic:
-        print("Missing topic for detach.")
+    topic = (args.topic or "").strip()
+    if not topic:
+        print("Missing topic.")
         _print_help()
         return 2
 
-    topic = args.topic.strip() if args.topic else ""
     mode = args.mode if args.mode is not None else _detect_mode(topic)
     if mode not in MODES:
         print(f"Invalid mode: {mode}. Allowed: {sorted(MODES)}")
         return 2
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id  = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = DEFAULT_RUN_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
 
     if args.detach:
-        print(f"[ANU] Run {run_id} détaché en arrière-plan (Mode: {mode})")
-        _log_line(f"run_start_detach run_id={run_id} mode={mode} topic_hash={hash(topic)} topic={topic!r}")
+        print(f"[ANU] Run {run_id} détaché (mode: {MODES[mode]}) — callback Telegram à la fin")
+        _log_line(f"run_start_detach run_id={run_id} mode={mode}")
         _exec_detached(run_dir, topic, mode)
         return 0
 
-    print(f"[ANU] Lancement mode {mode} ({MODES[mode]}) — run_id: {run_id}")
-    _log_line(f"run_start run_id={run_id} mode={mode} topic_hash={hash(topic)} topic={topic!r}")
+    print(f"[ANU] Démarrage mode {mode} ({MODES[mode]}) — run_id: {run_id}")
+    _log_line(f"run_start run_id={run_id} mode={mode} topic={topic[:80]!r}")
 
     try:
         summary = _run_pipeline(run_dir, topic, mode)
@@ -435,43 +578,44 @@ def main() -> int:
         print(f"[ANU] FAILED: {exc}")
         return 1
 
-    p2_mean = (summary.get("p2") or {}).get("mean") or 0.0
-    passes_count = sum(1 for p in ["p1", "p2", "p3", "p4"] if summary.get(p) and summary[p].get("status") != "skipped")
-
+    p2_mean     = (summary.get("p2") or {}).get("mean") or 0.0
+    passes_done = sum(
+        1 for p in ["p1", "p2", "p3", "p4"]
+        if summary.get(p) and summary[p].get("status") != "skipped"
+    )
     p4_md = run_dir / "p4.md"
     if p4_md.exists():
-        _info("\n" + "=" * 40)
-        _info("[ANU] LIVRAISON")
-        _info("=" * 40)
+        _info("\n" + "=" * 40 + "\n[ANU] LIVRAISON\n" + "=" * 40)
         print(_read_md(p4_md))
         _info("=" * 40)
-        _info("[ANU] Terminé — run_id: %s | mode: %s | score P2: %.1f/10 | passes: %d" % (run_id, MODES[mode], p2_mean, passes_count))
+        _info(f"[ANU] run_id={run_id} | mode={MODES[mode]} | score_p2={p2_mean:.1f}/10 | passes={passes_done}")
     else:
         print("[ANU] Terminé sans livrable p4.md.")
-    _log_line(f"run_completed run_id={run_id} mode={mode} score_p2={p2_mean} passes={passes_count}")
+
+    _log_line(f"run_completed run_id={run_id} mode={mode} score_p2={p2_mean} passes={passes_done}")
     return 0
 
 
 # ---------------------------------------------------------------------------
-# SINGLE ENTRY POINT
+# CHILD ENTRY POINT (--parent flag — invoked by systemd-run detach)
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if "--parent" in sys.argv:
         sys.argv.remove("--parent")
-        parser = argparse.ArgumentParser(prog="anu-child", add_help=False)
-        parser.add_argument("--topic", required=True)
-        parser.add_argument("--mode", required=True, type=int)
-        parser.add_argument("--run-id", required=True)
-        a = parser.parse_args()
-        mode = int(a.mode)
-        topic = a.topic
-        run_id = a.run_id
-        if mode not in MODES:
-            print(f"Invalid mode: {mode}")
+        p = argparse.ArgumentParser(prog="anu-child", add_help=False)
+        p.add_argument("--topic",  required=True)
+        p.add_argument("--mode",   required=True, type=int)
+        p.add_argument("--run-id", required=True)
+        a = p.parse_args()
+        if a.mode not in MODES:
+            print(f"Invalid mode: {a.mode}")
             raise SystemExit(2)
-        run_dir = DEFAULT_RUN_ROOT / run_id
-        _run_pipeline_with_callback(run_dir, topic, mode)
+        _run_pipeline_with_callback(
+            DEFAULT_RUN_ROOT / a.run_id,
+            a.topic,
+            a.mode,
+        )
         raise SystemExit(0)
 
     raise SystemExit(main())

@@ -1,3 +1,27 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# ANU run artefacts
+*.bak
+backups/*.bak
+
+# Hermes run output (ne pas versionner les runs)
+~/.hermes/
+
+# Logs
+*.log
+
+# Env
+.env
+*.env
