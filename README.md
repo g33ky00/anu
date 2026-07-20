@@ -1,37 +1,29 @@
 # ANU Mind
 
 > Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.  
-> Déclenché via la slash command `/anu`, il améliore la qualité et la pertinence des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction → validation.
+> Déclenché via la commande `anu` ou le slash `/anu`, il améliore la qualité des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
 [![Hermes Skill](https://img.shields.io/badge/Hermes-Skill-purple)]()
-[![Status](https://img.shields.io/badge/Status-ACTIF-brightgreen)]()
-[![License](https://img.shields.io/badge/License-MIT-lightgrey)]()
+[![Status](https://img.shields.io/badge/Status-ACTIF%20PROD-brightgreen)]()
 
 ---
 
 ## Principe
 
-ANU n'est pas un modèle différent — c'est une **méthode d'utilisation structurée** du même LLM (Stepfun 3.7 flash via Hermes) en 4 étapes séquentielles et contrôlées.
+ANU n’est pas un modèle différent — c’est une **méthode d’utilisation structurée** du même LLM (Stepfun 3.7 flash via Hermes) en 4 étapes séquentielles et contrôlées.
 
 ```
-Utilisateur : /anu <topic>
-                  │
-            ┌─────▼──────┐
-            │  P1 : GEN  │  Génération initiale (archétype choisi)
-            └─────┬──────┘
-            ┌─────▼──────┐
-            │  P2 : AUDIT│  Critique + scoring 5 dimensions (0-10)
-            └─────┬──────┘
-             score < 7 ?
-            ┌─────▼──────┐
-            │  P3 : FIX  │  Correction ciblée (si nécessaire)
-            └─────┬──────┘
-            ┌─────▼──────┐
-            │  P4 : VAL  │  Validation finale
-            └─────┬──────┘
-              Livraison p4.md
+anu <topic>
+       │
+  P1 ┃ Génération initiale (archétype choisi)
+       │
+  P2 ┃ Audit + scoring 5 dimensions (0-10)
+       │
+  P3 ┃ Correction ciblée — uniquement si score < 7.0 ou dimension < 5
+       │
+  P4 ┃ Validation finale → livrable p4.md
 ```
 
 ---
@@ -40,223 +32,206 @@ Utilisateur : /anu <topic>
 
 ```
 anu/
-├── tool/
-│   ├── anu_tool.py          ← Implémentation slash command /anu
-│   ├── tool_definition.json ← Déclaration Hermes du tool
-│   └── README.md
+├── tool.py                      ← Point d’entrée prod (⎜ ~/.local/bin/anu)
 ├── scripts/
-│   └── engine.py            ← Moteur 4-passes (544 lignes, stdlib only)
+│   └── engine.py                  ← Moteur 4-passes (stdlib only)
 ├── references/
-│   ├── anu-slash-command.md ← Référence complète /anu
-│   ├── modes.md             ← Spécifications 7 archétypes
+│   ├── modes.md                   ← Spécifications 7 archétypes
 │   ├── stepfun-nous-backend.md
 │   ├── nous-model-naming.md
 │   ├── provider-backend.md
 │   └── ns-documentation.md
 ├── templates/
-│   └── checkpoint_v1.json   ← Schéma checkpoint par passe
-├── tests/
-│   ├── test_anu_tool.py     ← Tests unitaires (detect_mode, score)
-│   ├── test_engine_integration.py ← Tests intégration (skip si pas de LLM)
-│   └── conftest.py
-├── backups/                 ← Snapshots horodatés engine.py
-├── SKILL.md                 ← Définition skill Hermes
+│   └── checkpoint_v1.json         ← Schéma checkpoint par passe
+├── tests/                         ← Tests unitaires et intégration
+├── backups/                       ← Snapshots horodatés engine.py
+├── SKILL.md                       ← Définition skill Hermes
 └── README.md
 ```
+
+> **Note :** `tool/` (anu_tool.py, tool_definition.json) est le squelette architecte Claude (référence).  
+> `tool.py` à la racine est l’implémentation réelle en production.
 
 ---
 
 ## Usage
 
-### Slash command (point d'entrée canonique)
+```bash
+anu <topic>                # mode auto-détecté
+anu <topic> --mode N      # archétype forcé (1-7)
+anu <topic> --detach      # exécution arrière-plan + callback Telegram
+anu --resume <run_id>     # reprise pipeline complet depuis dernier checkpoint
+anu --status              # liste 20 derniers runs
+```
 
-```
-/anu <topic>              # mode auto-détecté selon le sujet
-/anu <topic> --mode N     # archétype forcé (1-7)
-/anu --resume <run_id>    # reprise depuis dernier checkpoint valide
-/anu --status             # liste 10 derniers runs
-/anu --help               # aide
-```
+> **Manuel utilisateur FR :** `docs/manuel_utilisation_fr.md`
 
 ### Exemples
 
-```
-/anu analyse la stack réseau Proxmox
-/anu implémente un rate limiter Python --mode 2
-/anu sécurité SSH — hardening VM Debian --mode 5
-/anu --resume 20260718_143022
-/anu --status
-```
-
-### Progression en temps réel
-
-```
-[ANU | ARCHITECT] P1 génération...
-[ANU | ARCHITECT] P1 ✅
-[ANU | ARCHITECT] P2 audit...
-[ANU | ARCHITECT] P2 score: 7.8/10
-[ANU | ARCHITECT] P3 skipped (score OK)
-[ANU | ARCHITECT] P4 validation... ✅
-[ANU] Terminé en 47s — run_id: 20260718_143022
+```bash
+anu "audit SSH hardening" --mode 5
+anu "refactor parser.py" --mode 2
+anu "architecture NAS backup" --mode 1 --detach
+anu --status
+anu --resume 20260719_132400
 ```
 
 ---
 
-## Archétypes (7 modes)
+## Modes (archétypes)
 
-| ID | Nom | Domaine | Température |
+| Mode | Nom | Domaine | Détection auto |
 |---|---|---|---|
-| 1 | ARCHITECT | Architecture, infrastructure, design | basse |
-| 2 | CODER | Code, debug, scripts (**défaut**) | basse |
-| 3 | TEACHER | Documentation, tutoriels, explications | moyenne |
-| 4 | PROTOCOL | Procédures, specs, workflows | très basse |
-| 5 | AUDITOR | Sécurité, audit, risques | très basse |
-| 6 | WRITER | Rédaction, rapports, synthèses | haute |
-| 7 | RESEARCHER | Recherche, comparaisons, faits | basse |
-
-Détail complet : `references/modes.md`
+| 1 | ARCHITECT | Architecture, infrastructure | `architecture`, `design`, `schema`, `stack` |
+| 2 | CODER | Code, debug, scripts (**défaut**) | `code`, `debug`, `script`, `refactor` |
+| 3 | TEACHER | Documentation, tutoriels | `explique`, `tutoriel`, `documentation` |
+| 4 | PROTOCOL | Procédures, specs, workflows | `procedure`, `spec`, `protocole`, `yaml` |
+| 5 | AUDITOR | Sécurité, audit, risques | `audit`, `securite`, `risque` |
+| 6 | WRITER | Rédaction, rapports | `redige`, `article`, `rapport` |
+| 7 | RESEARCHER | Recherche, comparaisons | `recherche`, `compare`, `benchmark` |
 
 ---
 
-## Score P2 — Dimensions d'audit
+## Pipeline détaillé
+
+### Règles d’exécution
+
+| Passe | Condition | Toujours |
+|---|---|---|
+| P1 | — | ✅ |
+| P2 | — | ✅ |
+| P3 | `mean < 7.0` OU dimension `< 5` | Non (conditionnel) |
+| P4 | — | ✅ |
+
+### Score P2 — 5 dimensions
 
 | Dimension | Description |
 |---|---|
 | `factualite` | Exactitude des faits (0-10) |
-| `couverture` | Exhaustivité du traitement (0-10) |
-| `coherence` | Cohérence logique interne (0-10) |
-| `risques` | Identification des risques ou angles manquants (0-10) |
-| `clarte` | Clarté et lisibilité (0-10) |
+| `couverture` | Exhaustivité (0-10) |
+| `coherence` | Cohérence logique (0-10) |
+| `risques` | Identification des risques (0-10) |
+| `clarte` | Lisibilité (0-10) |
 
-Si la moyenne < 7.0 ou si une dimension est `critical_low` → P3 (correction) est déclenchée automatiquement.
-
----
-
-## Architecture technique
-
-### `tool/anu_tool.py`
-
-Implémentation de la slash command `/anu` :
-
-- `main()` — point d'entrée, parsing args, routage
-- `detect_mode(topic)` — mapping topic → archétype par mots-clés
-- `check_prerequisites()` — vérifie que `engine.py` est accessible
-- `run_pipeline(topic, mode_id, run_id)` — orchestre P1→P2→P3?→P4
-- `cmd_resume(run_id, ...)` — reprise depuis dernier checkpoint valide
-- `cmd_status()` — liste des 10 derniers runs
-- `deliver(result)` — lecture et affichage de `p4.md`
-- `_log_autonomous(msg)` — journalisation dans `hermes_YYYY-MM-DD.log`
-
-### `scripts/engine.py`
-
-Moteur bas niveau (544 lignes, stdlib uniquement) :
-
-- Authentification OAuth2 Hermes (`auth.json` + `config.yaml`)
-- Résolution modèle/endpoint (`_resolved_model`, `_resolved_base_url`)
-- Appel LLM avec extraction `content → reasoning → reasoning_details`
-- Écriture atomique des checkpoints (write + rename)
-- Calcul score P2 par dimension
-- Refresh token automatique sur 401/403
-
-### Flux de données
-
-```
-/anu topic --mode N
-    │
-    ├── anu_tool.py : detect_mode() → run_id
-    │
-    ├── engine.run_passes(run_dir, args_p1)   → p1.md + p1.json
-    ├── engine.run_passes(run_dir, args_p2)   → p2.md + p2.json (score)
-    ├── [engine.run_passes(run_dir, args_p3)] → p3.md + p3.json (si score < 7)
-    ├── engine.run_passes(run_dir, args_p4)   → p4.md + p4.json
-    │
-    └── deliver(result) → affichage p4.md + résumé
-```
-
----
-
-## Intégration dans Hermes
-
-### Installation
-
-```bash
-# Copier dans le répertoire skills Hermes
-cp -r . ~/.hermes/skills/autonomous-ai-agents/anu-mind/
-
-# Vérifier que le tool est détecté
-hermes tools list | grep anu
-```
-
-### SOUL.md — Section à ajouter dans les directives Hermes
-
-```
-## Tool /anu — ANU Mind
-
-/anu est le seul point d'entrée du pipeline ANU.
-Ne jamais appeler engine.py directement sans passer par /anu.
-Ne jamais déclencher ANU sans invocation explicite /anu.
-
-En cas d'erreur LLM pendant un run : checkpoint sur la dernière passe
-réussie, notifier l'utilisateur, proposer --resume <run_id>.
-```
-
-### Répertoire de sortie
+### Artefacts par run
 
 ```
 ~/.hermes/profiles/<profile>/cron/output/anu/<run_id>/
 ├── p1.md / p1.json
-├── p2.md / p2.json
-├── p3.md / p3.json   (si correction)
+├── p2.md / p2.json   ← score 5 dimensions
+├── p3.md / p3.json   ← si correction nécessaire
 ├── p4.md / p4.json   ← livrable principal
-└── .manifest.json
+└── .manifest.json    ← écriture atomique (.tmp + os.replace)
 ```
 
 ---
 
-## Tests
+## Mode `--detach` (arrière-plan)
+
+- Fork via `systemd-run --user --unit=anu-run-<run_id>`
+- Retour shell garanti < 2 s
+- Callback Telegram automatique à la fin : livrable `p4.md` fragmenté en chunks ≤ 4096 caractères
+- Environnement injecté : `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `HERMES_HOME`, `HERMES_PROFILE`, `HOME`, `USER`
+
+### Format callback Telegram
+
+```
+[ANU | ARCHITECT | Run 20260719_132400 | Score P2: 8.2/10]
+<contenu p4.md>
+```
+
+---
+
+## Variables d’environnement
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `HERMES_PROFILE` | `dev` | Profile Hermes actif |
+| `HERMES_HOME` | `~/.hermes` | Racine Hermes |
+| `TELEGRAM_BOT_TOKEN` | — | Override token (prioritaire sur auth.json) |
+| `TELEGRAM_CHAT_ID` | — | Override chat_id |
+
+**Lecture des credentials Telegram (priorité décroissante) :**
+1. Env vars `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+2. `~/.hermes/auth.json` → `providers.telegram`
+3. `~/.hermes/config.yaml` → section `telegram:`
+
+---
+
+## Installation
 
 ```bash
-# Tests unitaires (sans LLM)
-python3 -m pytest tests/test_anu_tool.py -v
+# Le skill est déjà installé via Hermes
+# Point d’entrée :
+ls -la ~/.local/bin/anu
+# → /home/g33ky/.hermes/skills/autonomous-ai-agents/anu-mind/tool.py
 
-# Tests d'intégration (nécessitent un backend LLM actif)
-python3 -m pytest tests/test_engine_integration.py -m integration -v
-
-# Tous les tests
-python3 -m pytest -v
+# Vérification
+anu --help
+anu --status
 ```
+
+---
+
+## Logging
+
+```
+~/.hermes/profiles/<profile>/logs/hermes_YYYY-MM-DD.log
+```
+
+Événements tracés (`[AUTONOMOUS] [anu_mind]`) :
+
+| Événement | Description |
+|---|---|
+| `run_start` | Début run synchrone |
+| `run_start_detach` | Début run détaché |
+| `run_completed` | Fin OK avec score et nb passes |
+| `run_failed` | Erreur avec traceback |
+| `run_resume` | Reprise depuis checkpoint |
+| `telegram_push_start` | Tentative envoi (token masqué) |
+| `telegram_push_failed` | Échec envoi avec raison |
 
 ---
 
 ## Sécurité
 
-- Aucun token/secret en clair dans le code, les checkpoints ou les logs
-- `scrub_secrets()` appliqué sur toute sortie LLM avant écriture disque
-- Pas d'`eval()`, `exec()`, `subprocess` avec input utilisateur
+- Token Telegram **jamais en clair dans les logs** (`_mask_token()` — format `abcd****...wxyz`)
+- Aucun secret dans les checkpoints ou artefacts de run
 - Inputs : `topic` et `--mode` uniquement
+- Pas d’`eval()`, `exec()`, `subprocess` avec input utilisateur
+
+---
+
+## Limitations connues
+
+- Erreur bash `impossible de régler le groupe de processus du terminal` : attendue hors terminal de contrôle, sans impact fonctionnel
+- `auth.json` absent/corrompu : callbacks Telegram désactivés, tracé en `credentials_missing`
+- `PROFILE` absent depuis un shell brut : repli automatique sur `dev`
 
 ---
 
 ## Changelog
 
+### v2.0.1 — Juillet 2026 (patch prod)
+
+- **[fix]** `response.status` (corrige `resp.status` — NameError, Telegram toujours échoué)
+- **[fix]** `DEFAULT_RUN_ROOT` / `ENGINE_DEFAULT` respectent `HERMES_PROFILE` env var
+- **[fix]** `_resume()` : reprise complète du pipeline depuis le dernier checkpoint (pas seulement la passe suivante)
+- **[fix]** Token Telegram masqué dans tous les appels `_log_line()`
+- **[fix]** `_load_telegram_credentials()` : regex YAML plus robuste, suppression du fallback `openrouter`
+- **[maint]** `.gitignore` : exclusion des `.bak` et des runs Hermes
+- **[docs]** README aligné sur l’implémentation réelle
+
 ### v2.0.0 — Juillet 2026
 
-- **[arch]** Ajout slash command `/anu` (`tool/anu_tool.py` + `tool_definition.json`)
-- **[arch]** `engine.py` n'est plus invocable directement depuis une session Hermes
-- **[impl]** `detect_mode()` — mapping automatique topic → archétype
-- **[impl]** `run_pipeline()` — orchestration P1→P2→P3?→P4 avec score conditionnel
-- **[impl]** `cmd_resume()` — reprise depuis dernier checkpoint valide
-- **[impl]** `cmd_status()` — listing des runs récents
-- **[impl]** `_log_autonomous()` — journalisation AUTONOMOUS native
-- **[test]** `tests/test_anu_tool.py` — 9 tests unitaires (detect_mode, score)
-- **[test]** `tests/test_engine_integration.py` — tests intégration LLM
-- **[docs]** `references/anu-slash-command.md` — référence complète /anu
-- **[docs]** `SKILL.md` v2.0.0 — mis à jour, /anu comme point d'entrée canonique
+- Pipeline 4 passes avec mode `--detach` (systemd-run) et callback Telegram
+- 7 archétypes, détection automatique par mots-clés
+- Manifest atomique, logging AUTONOMOUS
+- `--status` et `--resume`
 
 ### v1.0.0 — Juin 2026
 
 - Pipeline 4 passes initial (`engine.py`)
-- 7 archétypes, checkpoints JSON, scoring P2
 - Intégration Hermes via `execute_code`
 
 ---
@@ -268,5 +243,5 @@ Architecture : **Claude (Anthropic)** via MCP GitHub.
 Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
 
 <div align="center">
-  <sub>Composant de l'écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
+  <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
 </div>
