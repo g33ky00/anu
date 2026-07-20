@@ -209,13 +209,20 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
 
 
 def _telegram_push(text: str, chat_id: str | None = None) -> bool:
+    # Diagnostic différentiel : on journalise précisément ce qui manque
+    env_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not env_chat_id:
+        _log_line("telegram_credentials_diag missing=TELEGRAM_CHAT_ID(env)")
+        return False
+
     token, default_chat = _load_telegram_credentials()
     if not token:
-        _log_line("telegram_push_failed reason=credentials_missing")
+        _log_line("telegram_credentials_diag missing=token(auth.json)")
         return False
+
     chat = chat_id or default_chat
     if not chat:
-        _log_line("telegram_push_failed reason=chat_id_missing")
+        _log_line("telegram_credentials_diag missing=chat_id(final)")
         return False
 
     url     = f"https://api.telegram.org/bot{token}/sendMessage"
