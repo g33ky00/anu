@@ -28,11 +28,20 @@ from zoneinfo import ZoneInfo
 # PATHS / PROFILE
 # ---------------------------------------------------------------------------
 HOME = Path.home()
+# PATHS / PROFILE
 _PROFILE = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE", "dev")
-_HERMES_HOME = Path(os.environ.get("HERMES_HOME", str(HOME / ".hermes")))
+_HERMES_HOME = Path(
+    os.environ.get(
+        "HERMES_HOME",
+        str(Path.home() / ".hermes" / "profiles" / _PROFILE),
+    )
+)
+DEFAULT_RUN_ROOT = _HERMES_HOME / "cron" / "output" / "anu"
+DEFAULT_LOG_DIR = _HERMES_HOME / "logs"
 
-DEFAULT_RUN_ROOT = _HERMES_HOME / "profiles" / _PROFILE / "cron" / "output" / "anu"
-ENGINE_DEFAULT   = _HERMES_HOME / "profiles" / _PROFILE / "skills" / "anu_mind" / "scripts" / "engine.py"
+# Structural fix (Dette migratoire N4): moteur global invariant quel que soit le profil appelant.
+BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
+ENGINE_DEFAULT = BASE_DIR / "scripts" / "engine.py"
 
 
 def _manifest_update(run_dir: Path, pass_data: dict) -> None:
@@ -169,7 +178,7 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
         return bot_token, chat_id
 
     # auth.json
-    auth_path = _HERMES_HOME / "auth.json"
+    auth_path = Path("/home/g33ky/.hermes/auth.json")
     if auth_path.exists():
         try:
             data      = json.loads(auth_path.read_text(encoding="utf-8"))
@@ -219,10 +228,12 @@ def _telegram_push(text: str, chat_id: str | None = None) -> bool:
         url, data=payload, headers={"Content-Type": "application/json"}
     )
     try:
-        _log_line(f"telegram_push_start chat_id={chat} token={_mask_token(token)}")
+        _log_line("telegram_push_start")
         with urllib.request.urlopen(req, timeout=15) as response:
             ok = response.status == 200  # FIX: was resp.status — NameError
-            if not ok:
+            if ok:
+                _log_line("telegram_push_success")
+            else:
                 _log_line(f"telegram_push_failed http_status={response.status}")
             return ok
     except Exception as e:
@@ -252,18 +263,30 @@ def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
 
 def _exec_detached(run_dir: Path, topic: str, mode: int) -> None:
     script      = str(Path(__file__).resolve())
-    xdg_runtime = f"/run/user/{os.getuid()}"
+    uid         = str(os.getuid())
     env         = os.environ.copy()
-    env["XDG_RUNTIME_DIR"]       = xdg_runtime
-    env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={xdg_runtime}/bus"
-    env["HERMES_HOME"]           = str(_HERMES_HOME)
-    env["HERMES_PROFILE"]        = _PROFILE
-    env["HOME"]                  = str(HOME)
-    env["USER"]                  = os.environ.get("USER", HOME.name)
+
+    if "XDG_RUNTIME_DIR" not in env:
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+    if "DBUS_SESSION_BUS_ADDRESS" not in env:
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
+    if "HOME" not in env:
+        env["HOME"] = os.path.expanduser("~")
+    if "USER" not in env:
+        env["USER"] = "g33ky"
+    if "PROFILE" not in env:
+        env["PROFILE"] = "dev"
+    if "HERMES_HOME" not in env:
+        env["HERMES_HOME"] = f"/home/g33ky/.hermes/profiles/{env['PROFILE']}"
+
     cmd = [
         "systemd-run", "--user",
         "--unit",    f"anu-run-{run_dir.name}",
         "--collect",
+        f"--setenv=TELEGRAM_CHAT_ID={env.get('TELEGRAM_CHAT_ID') or env.get('HERMES_SESSION_CHAT_ID', '')}",
+        f"--setenv=PROFILE={env['PROFILE']}",
+        f"--setenv=HERMES_HOME={env['HERMES_HOME']}",
+        f"--setenv=PATH={env.get('PATH', '')}",
         sys.executable, script,
         "--parent",
         "--topic",  topic,
@@ -326,7 +349,14 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
 
 def _detect_mode(topic: str) -> int:
     t = topic.lower()
+    # Priorité absolue à l'intention pédagogique : matching par mot
+    teacher_keywords = MODE_KEYWORDS.get(3, [])
+    if any(re.search(rf"\b{re.escape(k)}\b", t) for k in teacher_keywords):
+        return 3
+    # Matching substring standard pour les autres modes
     for mid, keywords in MODE_KEYWORDS.items():
+        if mid == 3:
+            continue
         if any(k in t for k in keywords):
             return mid
     return 2  # CODER fallback
@@ -559,7 +589,12 @@ def main() -> int:
         return 2
 
     run_id  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = DEFAULT_RUN_ROOT / run_id
+    current_profile = os.environ.get("PROFILE", "dev")
+    base_profile_dir = os.environ.get(
+        "HERMES_HOME",
+        f"/home/g33ky/.hermes/profiles/{current_profile}",
+    )
+    run_dir = Path(os.path.join(base_profile_dir, "cron", "output", "anu", run_id))
     run_dir.mkdir(parents=True, exist_ok=False)
 
     if args.detach:
@@ -570,7 +605,6 @@ def main() -> int:
 
     print(f"[ANU] Démarrage mode {mode} ({MODES[mode]}) — run_id: {run_id}")
     _log_line(f"run_start run_id={run_id} mode={mode} topic={topic[:80]!r}")
-
     try:
         summary = _run_pipeline(run_dir, topic, mode)
     except Exception as exc:
@@ -611,11 +645,17 @@ if __name__ == "__main__":
         if a.mode not in MODES:
             print(f"Invalid mode: {a.mode}")
             raise SystemExit(2)
-        _run_pipeline_with_callback(
-            DEFAULT_RUN_ROOT / a.run_id,
-            a.topic,
-            a.mode,
+
+        current_profile = os.environ.get("PROFILE", "dev")
+        base_profile_dir = os.environ.get(
+            "HERMES_HOME",
+            f"/home/g33ky/.hermes/profiles/{current_profile}",
         )
+        child_run_dir = Path(os.path.join(base_profile_dir, "cron", "output", "anu", a.run_id))
+        if not child_run_dir.exists():
+            raise SystemExit(f"Missing run_dir: {child_run_dir}")
+
+        _run_pipeline_with_callback(child_run_dir, a.topic, a.mode)
         raise SystemExit(0)
 
     raise SystemExit(main())

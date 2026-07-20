@@ -64,6 +64,8 @@ anu --resume <run_id>     # reprise pipeline complet depuis dernier checkpoint
 anu --status              # liste 20 derniers runs
 ```
 
+> **Manuel utilisateur FR :** `docs/manuel_utilisation_fr.md`
+
 ### Exemples
 
 ```bash
