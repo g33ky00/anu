@@ -1,7 +1,8 @@
 # ANU Mind
 
 > Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.  
-> Déclenché via la commande `anu` ou le slash `/anu`, il améliore la qualité des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
+> Déclenché via la commande `anu` ou le slash `/anu`, il améliore la qualité des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.  
+> Wrapper Telegram `anu-tg` fourni via liens symboliques système pointant vers `install/`.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
@@ -32,9 +33,12 @@ anu <topic>
 
 ```
 anu/
-├── tool.py                      ← Point d’entrée prod (⎜ ~/.local/bin/anu)
+├── tool.py                       ← Point d’entrée prod (→ ~/.local/bin/anu)
 ├── scripts/
 │   └── engine.py                  ← Moteur 4-passes (stdlib only)
+├── install/
+│   ├── anu-tg.sh                  ← Wrapper Telegram déployé via installer
+│   └── install.sh                 ← Déploiement idempotent des symlinks
 ├── references/
 │   ├── modes.md                   ← Spécifications 7 archétypes
 │   ├── stepfun-nous-backend.md
@@ -51,6 +55,22 @@ anu/
 
 > **Note :** `tool/` (anu_tool.py, tool_definition.json) est le squelette architecte Claude (référence).  
 > `tool.py` à la racine est l’implémentation réelle en production.
+
+### Déploiement système
+
+```bash
+# Installer/mettre à jour les liens système depuis le dépôt
+bash install/install.sh
+
+# Résultat attendu
+# ~/.local/bin/anu        → <repo>/tool.py
+# ~/.local/bin/anu-tg     → <repo>/install/anu-tg.sh
+```
+
+`install.sh` est idempotent :
+- `mkdir -p ~/.local/bin`
+- `ln -snf` pour forcer l’écrasement sans déréférencement
+- `chmod +x` sur source et cibles
 
 ---
 
@@ -162,9 +182,13 @@ anu --resume 20260719_132400
 
 ```bash
 # Le skill est déjà installé via Hermes
-# Point d’entrée :
-ls -la ~/.local/bin/anu
-# → /home/g33ky/.hermes/skills/autonomous-ai-agents/anu-mind/tool.py
+# Points d’entrée :
+ls -la ~/.local/bin/anu ~/.local/bin/anu-tg
+# ~/.local/bin/anu       → <repo>/tool.py
+# ~/.local/bin/anu-tg    → <repo>/install/anu-tg.sh
+
+# Installer/mettre à jour les liens :
+bash <repo>/install/install.sh
 
 # Vérification
 anu --help
@@ -211,6 +235,12 @@ anu --status
 ---
 
 ## Changelog
+
+### v2.0.2 — Juillet 2026
+
+- **[feat]** Ajout de `install/install.sh` avec déploiement idempotent des symlinks
+- **[feat]** Intégration du wrapper `anu-tg` dans le dépôt via `install/anu-tg.sh`
+- **[maint]** Single Source of Truth étendue aux binaires système `anu` et `anu-tg`
 
 ### v2.0.1 — Juillet 2026 (patch prod)
 
