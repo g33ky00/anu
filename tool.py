@@ -41,7 +41,7 @@ DEFAULT_LOG_DIR = _HERMES_HOME / "logs"
 
 # Structural fix (Dette migratoire N4): moteur global invariant quel que soit le profil appelant.
 BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
-ENGINE_DEFAULT = BASE_DIR / "scripts" / "engine.py"
+ENGINE_DEFAULT = Path("/home/g33ky/.hermes/skills/autonomous-ai-agents/anu-mind/scripts/engine.py")
 
 
 def _manifest_update(run_dir: Path, pass_data: dict) -> None:
@@ -171,61 +171,81 @@ def _engine_pass(
 # ---------------------------------------------------------------------------
 
 def _load_telegram_credentials() -> tuple[str, str | None]:
-    """Returns (bot_token, chat_id). Token is never logged."""
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id   = os.getenv("TELEGRAM_CHAT_ID")
-    if bot_token:
-        return bot_token, chat_id
+    """Returns (bot_token, chat_id). Token is never logged in clear.
 
-    # auth.json
-    auth_path = Path("/home/g33ky/.hermes/auth.json")
-    if auth_path.exists():
+    Resolution order (first match wins):
+      1) Dynamic context from Gateway: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+      2) Profile context: HERMES_HOME/profiles/<active>/auth.json
+      3) Global fallback: HERMES_HOME/auth.json
+      4) Profile config.yaml shallow parse
+    """
+    missing = []
+
+    def _read_auth(p: Path) -> tuple[str, str | None] | None:
         try:
-            data      = json.loads(auth_path.read_text(encoding="utf-8"))
+            data = json.loads(p.read_text(encoding="utf-8"))
             providers = data.get("providers", {}) if isinstance(data, dict) else {}
             for name in ("telegram", "tg"):
                 item = providers.get(name)
                 if isinstance(item, dict):
-                    tk = (
-                        item.get("access_token")
-                        or item.get("bot_token")
-                        or item.get("token")
-                    )
+                    tk = item.get("access_token") or item.get("bot_token") or item.get("token")
+                    chat = item.get("chat_id") or item.get("admin_chat_id")
                     if tk:
-                        chat_id = chat_id or item.get("chat_id") or item.get("admin_chat_id")
-                        return tk, chat_id
+                        return tk, chat
         except Exception:
             pass
+        return None
 
-    # config.yaml — shallow parse (token never appears in logs)
+    # 1) Dynamic context from Gateway
+    dyn_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    dyn_chat = os.getenv("TELEGRAM_CHAT_ID")
+    if dyn_token:
+        return dyn_token, dyn_chat
+    if not dyn_token:
+        missing.append("token")
+    if not dyn_chat:
+        missing.append("chat_id")
+
+    # 2) Profile auth.json
+    profile_auth = _HERMES_HOME / "profiles" / os.environ.get("PROFILE", "dev") / "auth.json"
+    if profile_auth.exists():
+        got = _read_auth(profile_auth)
+        if got:
+            return got
+
+    # 3) Global auth.json
+    global_auth = Path("/home/g33ky/.hermes/auth.json")
+    if global_auth.exists():
+        got = _read_auth(global_auth)
+        if got:
+            return got
+
+    # 4) config.yaml shallow parse
     config_path = _HERMES_HOME / "config.yaml"
     if config_path.exists():
         txt = config_path.read_text(encoding="utf-8", errors="ignore")
         m = re.search(r"telegram:\s*\n(?:[^\n]*\n)*?\s*(?:bot_token|token):\s*[\"']?([^\"'\n]+)", txt)
         if m:
-            return m.group(1).strip(), chat_id
+            token = m.group(1).strip()
+            chat_id = os.getenv("TELEGRAM_CHAT_ID")
+            return token, chat_id
 
-    return "", chat_id
+    _log_line(f"telegram_push_failed reason=credentials_missing missing={sorted(set(missing))}")
+    return "", None
 
 
-def _telegram_push(text: str, chat_id: str | None = None) -> bool:
-    # Diagnostic différentiel : on journalise précisément ce qui manque
-    env_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if not env_chat_id:
-        _log_line("telegram_credentials_diag missing=TELEGRAM_CHAT_ID(env)")
-        return False
-
+def _telegram_push(text: str, chat_id: str | None = None, run_id: str | None = None) -> bool:
     token, default_chat = _load_telegram_credentials()
     if not token:
-        _log_line("telegram_credentials_diag missing=token(auth.json)")
+        _log_line("telegram_push_failed reason=credentials_missing missing=token")
         return False
 
     chat = chat_id or default_chat
     if not chat:
-        _log_line("telegram_credentials_diag missing=chat_id(final)")
+        _log_line("telegram_push_failed reason=credentials_missing missing=chat_id")
         return False
 
-    url     = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({
         "chat_id": chat,
         "text": text,
@@ -236,10 +256,11 @@ def _telegram_push(text: str, chat_id: str | None = None) -> bool:
     )
     try:
         _log_line("telegram_push_start")
-        with urllib.request.urlopen(req, timeout=15) as response:
-            ok = response.status == 200  # FIX: was resp.status — NameError
+        with urllib.request.urlopen(req, timeout=180) as response:
+            ok = response.status == 200
+            rid = run_id or "-"
             if ok:
-                _log_line("telegram_push_success")
+                _log_line(f"telegram_push_success run_id={rid} status=ok target_chat={chat}")
             else:
                 _log_line(f"telegram_push_failed http_status={response.status}")
             return ok
@@ -268,7 +289,7 @@ def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
 # DETACH / FORK
 # ---------------------------------------------------------------------------
 
-def _exec_detached(run_dir: Path, topic: str, mode: int) -> None:
+def _exec_detached(run_dir: Path, topic: str, mode: int, *, reply_to: str | None = None, bot_token: str | None = None) -> None:
     script      = str(Path(__file__).resolve())
     uid         = str(os.getuid())
     env         = os.environ.copy()
@@ -286,11 +307,14 @@ def _exec_detached(run_dir: Path, topic: str, mode: int) -> None:
     if "HERMES_HOME" not in env:
         env["HERMES_HOME"] = f"/home/g33ky/.hermes/profiles/{env['PROFILE']}"
 
+    chat_for_child = reply_to or env.get('TELEGRAM_CHAT_ID') or env.get('HERMES_SESSION_CHAT_ID', '')
+    token_for_child = bot_token or env.get('TELEGRAM_BOT_TOKEN', '')
     cmd = [
         "systemd-run", "--user",
         "--unit",    f"anu-run-{run_dir.name}",
         "--collect",
-        f"--setenv=TELEGRAM_CHAT_ID={env.get('TELEGRAM_CHAT_ID') or env.get('HERMES_SESSION_CHAT_ID', '')}",
+        f"--setenv=TELEGRAM_CHAT_ID={chat_for_child}",
+        f"--setenv=TELEGRAM_BOT_TOKEN={token_for_child}",
         f"--setenv=PROFILE={env['PROFILE']}",
         f"--setenv=HERMES_HOME={env['HERMES_HOME']}",
         f"--setenv=PATH={env.get('PATH', '')}",
@@ -300,6 +324,12 @@ def _exec_detached(run_dir: Path, topic: str, mode: int) -> None:
         "--mode",   str(mode),
         "--run-id", run_dir.name,
     ]
+    masked_cmd = ' '.join(
+        f"--setenv=TELEGRAM_BOT_TOKEN=****{token_for_child[-4:]}" if token_for_child else part
+        if part.startswith("--setenv=TELEGRAM_BOT_TOKEN=") else part
+        for part in cmd
+    )
+    _log_line(f"systemd-run cmd=`{masked_cmd}`")
     subprocess.Popen(
         cmd, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
@@ -316,7 +346,7 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
             f"\U0001f6a8 [ANU - ERREUR FATALE] Échec pipeline.\n"
             f"Reprise : /anu --resume {run_id}\nErreur : {exc!r}"
         )
-        _telegram_push(msg)
+        _telegram_push(msg, run_id=run_id)
         _log_line(f"run_failed run_id={run_id} error={exc!r}")
         return
 
@@ -339,7 +369,7 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
     header  = f"[ANU | {MODES[mode]} | Run {run_id} | Score P2: {p2_mean:.1f}/10]\n"
     chunks  = _split_for_telegram(header + content)
     for i, chunk in enumerate(chunks):
-        sent = _telegram_push(chunk)
+        sent = _telegram_push(chunk, run_id=run_id)
         _log_line(
             f"telegram_push run_id={run_id} "
             f"part={i+1}/{len(chunks)} status={'ok' if sent else 'failed'}"
