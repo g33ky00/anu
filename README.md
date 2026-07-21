@@ -1,4 +1,3 @@
-```markdown
 # ANU Mind
 
 <div align="center">
