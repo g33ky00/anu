@@ -32,10 +32,13 @@ anu <topic>
 ## Structure du dépôt
 
 ```
+
+
 anu/
 ├── tool.py                       ← Point d’entrée prod (→ ~/.local/bin/anu)
 ├── scripts/
-│   └── engine.py                  ← Moteur 4-passes (stdlib only)
+│   ├── engine.py                  ← Moteur 4-passes (stdlib only)
+│   └── patch_auth.py              ← Correctif auth Telegram
 ├── install/
 │   ├── anu-tg.sh                  ← Wrapper Telegram déployé via installer
 │   └── install.sh                 ← Déploiement idempotent des symlinks
@@ -47,14 +50,22 @@ anu/
 │   └── ns-documentation.md
 ├── templates/
 │   └── checkpoint_v1.json         ← Schéma checkpoint par passe
-├── tests/                         ← Tests unitaires et intégration
+├── tests/
+│   ├── test_anu_tool.py
+│   └── test_engine_integration.py
 ├── backups/                       ← Snapshots horodatés engine.py
+├── tool/
+│   ├── anu_tool.py                ← Implémentation historique
+│   └── tool_definition.json
+├── docs/
+│   └── manuel_utilisation_fr.md
 ├── SKILL.md                       ← Définition skill Hermes
 └── README.md
 ```
 
-> **Note :** `tool/` (anu_tool.py, tool_definition.json) est le squelette architecte Claude (référence).  
-> `tool.py` à la racine est l’implémentation réelle en production.
+> **Notes :**
+> - `tool/anu_tool.py` fait partie de l’implémentation historique.
+> - `~/.local/bin/anu` et `~/.local/bin/anu-tg` sont gérés par `install.sh`.
 
 ### Déploiement système
 
@@ -236,42 +247,28 @@ anu --status
 
 ## Changelog
 
-### v2.0.2 — Juillet 2026
+### v0.9.1 — Juillet 2026
 
 - **[feat]** Ajout de `install/install.sh` avec déploiement idempotent des symlinks
 - **[feat]** Intégration du wrapper `anu-tg` dans le dépôt via `install/anu-tg.sh`
 - **[maint]** Single Source of Truth étendue aux binaires système `anu` et `anu-tg`
+- **[docs]** README aligné sur l’implémentation réelle, structure complète et mainteneur
 
-### v2.0.1 — Juillet 2026 (patch prod)
-
-- **[fix]** `response.status` (corrige `resp.status` — NameError, Telegram toujours échoué)
-- **[fix]** `DEFAULT_RUN_ROOT` / `ENGINE_DEFAULT` respectent `HERMES_PROFILE` env var
-- **[fix]** `_resume()` : reprise complète du pipeline depuis le dernier checkpoint (pas seulement la passe suivante)
-- **[fix]** Token Telegram masqué dans tous les appels `_log_line()`
-- **[fix]** `_load_telegram_credentials()` : regex YAML plus robuste, suppression du fallback `openrouter`
-- **[maint]** `.gitignore` : exclusion des `.bak` et des runs Hermes
-- **[docs]** README aligné sur l’implémentation réelle
-
-### v2.0.0 — Juillet 2026
+### v0.9.0 — Juillet 2026
 
 - Pipeline 4 passes avec mode `--detach` (systemd-run) et callback Telegram
 - 7 archétypes, détection automatique par mots-clés
 - Manifest atomique, logging AUTONOMOUS
 - `--status` et `--resume`
 
-### v1.0.0 — Juin 2026
-
-- Pipeline 4 passes initial (`engine.py`)
-- Intégration Hermes via `execute_code`
-
 ---
 
 ## Mainteneur
 
-**Pytheas Infrastructure** — Usage interne exclusif.  
-Architecture : **Claude (Anthropic)** via MCP GitHub.  
-Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
+**Coresynq IT** — Usage privé exclusif.  
+Direction : g33ky.  
+Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis Pytheas.
 
 <div align="center">
-  <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
+  <sub>Composant de l’écosystème <strong>Hermes</strong> — Coresynq IT 🌿</sub>
 </div>
