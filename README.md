@@ -10,7 +10,7 @@
 <br>
 
 > **Moteur de raisonnement structuré multi-passes pour Hermes Agent.**<br>
-> Déclenché via la commande `anu` ou le slash `/anu`, il implémente le pattern d'ingénierie "Reflexion" pour atténuer les hallucinations des LLMs. Le système applique un pipeline 4 passes : génération → audit asynchrone → remédiation (conditionnelle) → validation. L'intégration OS est assurée par le wrapper `anu-tg` avec exécution en *transient unit* systemd.
+> Déclenché via la commande `anu` ou le slash `/anu`, il implémente le pattern d'ingénierie "Reflexion" pour atténuer les hallucinations des LLMs. Le système applique un pipeline 4 passes : génération → audit asynchrane → remédiation (conditionnelle) → validation. L'intégration OS est assurée par le wrapper `anu-tg` avec exécution en *transient unit* systemd.
 
 ---
 
@@ -103,9 +103,14 @@ anu --status              # Topologie des 20 derniers runs
 anu "audit SSH hardening" --mode 5
 anu "refactor parser.py" --mode 2
 anu "architecture NAS backup" --mode 1 --detach
+anu --status
 anu --resume 20260719_132400
+anu "rapport conformité" --mode 6
+anu "benchmark stockage" --mode 7
 
 ```
+
+> **Manuel utilisateur FR :** `docs/manuel_utilisation_fr.md`
 
 ---
 
@@ -161,7 +166,27 @@ L'utilisation de `--detach` isole le processus de la session shell courante via 
 
 ---
 
-## 8. Posture de Sécurité & Résolution des Secrets
+## 8. Logging
+
+```text
+~/.hermes/profiles/<profile>/logs/hermes_YYYY-MM-DD.log
+```
+
+Événements tracés (`[AUTONOMOUS] [anu_mind]`) :
+
+| Événement | Description |
+| --- | --- |
+| `run_start` | Début run synchrone |
+| `run_start_detach` | Début run détaché |
+| `run_completed` | Fin OK avec score et nb passes |
+| `run_failed` | Erreur avec traceback |
+| `run_resume` | Reprise depuis checkpoint |
+| `telegram_push_start` | Tentative envoi (token masqué) |
+| `telegram_push_failed` | Échec envoi avec raison |
+
+---
+
+## 9. Posture de Sécurité & Résolution des Secrets
 
 L'architecture ANU est conçue selon le principe du moindre privilège (Zero Trust local) :
 
@@ -177,7 +202,50 @@ L'architecture ANU est conçue selon le principe du moindre privilège (Zero Tru
 
 ---
 
-## 9. Changelog Technique
+## 10. Variables d’Environnement
+
+| Variable | Défaut | Rôle |
+| --- | --- | --- |
+| `HERMES_PROFILE` | `dev` | Profile Hermes actif |
+| `HERMES_HOME` | `~/.hermes` | Racine Hermes |
+| `TELEGRAM_BOT_TOKEN` | — | Override token (prioritaire sur auth.json) |
+| `TELEGRAM_CHAT_ID` | — | Override chat_id |
+
+**Lecture des credentials Telegram (priorité décroissante) :**
+1. Env vars `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+2. `~/.hermes/auth.json` → `providers.telegram`
+3. `~/.hermes/config.yaml` → section `telegram:`
+
+---
+
+## 11. Installation
+
+```bash
+# Le skill est déjà installé via Hermes
+# Points d’entrée :
+ls -la ~/.local/bin/anu ~/.local/bin/anu-tg
+# ~/.local/bin/anu       → <repo>/tool.py
+# ~/.local/bin/anu-tg    → <repo>/install/anu-tg.sh
+
+# Installer/mettre à jour les liens :
+bash <repo>/install/install.sh
+
+# Vérification
+anu --help
+anu --status
+```
+
+---
+
+## 12. Limitations Connues
+
+* Erreur bash `impossible de régler le groupe de processus du terminal` : attendue hors terminal de contrôle, sans impact fonctionnel
+* `auth.json` absent/corrompu : callbacks Telegram désactivés, tracé en `credentials_missing`
+* `PROFILE` absent depuis un shell brut : repli automatique sur `dev`
+
+---
+
+## 13. Changelog
 
 ### v0.9.1 — Juillet 2026
 
@@ -192,3 +260,13 @@ L'architecture ANU est conçue selon le principe du moindre privilège (Zero Tru
 * Création de la machine d'état (`--status`, `--resume`).
 
 ---
+
+## Mainteneur
+
+**Coresynq IT** — Usage privé exclusif.  
+Direction : g33ky.  
+Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis Pytheas.
+
+<div align="center">
+  <sub>Composant de l’écosystème <strong>Hermes</strong> — Coresynq IT 🌿</sub>
+</div>
