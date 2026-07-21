@@ -206,7 +206,7 @@ def _mask_token(value: Optional[str]) -> str:
     return "<absent>" if not value else "<set>"
 
 
-def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout: int = 60) -> Dict[str, Any]:
+def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeout: int = 600) -> Dict[str, Any]:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -257,7 +257,7 @@ def _refresh_access_token() -> Dict[str, Any]:
     form = "&".join(f"{k}={urllib.parse.quote(v)}" for k, v in payload.items())
     req = urllib.request.Request(token_url, data=form.encode("utf-8"), headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=600) as resp:
             obj = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
         return {"ok": False, "error": f"refresh_failed: {type(e).__name__}: {str(e)[:200]}"}
