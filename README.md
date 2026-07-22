@@ -1,6 +1,6 @@
 # ANU Mind
 
-> Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.
+> Moteur de raisonnement structuré multi-passes pour **Hermes Agent — v1.0.0 Prod-Ready**.
 > Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes
 > en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
 > Callback automatique via Telegram à l'issue de chaque run détaché.
@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
 [![Hermes Skill](https://img.shields.io/badge/Hermes-Skill-purple)]()
-[![Version](https://img.shields.io/badge/version-0.9-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
 [![Status](https://img.shields.io/badge/Status-PROD-brightgreen)]()
 
 ---
