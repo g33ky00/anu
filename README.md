@@ -53,7 +53,8 @@ anu/
 │   ├── provider-backend.md          ← Règles provider/backend
 │   ├── nous-model-naming.md         ← Nommage modèles Nous
 │   ├── ns-documentation.md          ← Documentation NS
-│   └── run_passes-return-none-diagnosis.md
+│   ├── run_passes-return-none-diagnosis.md
+│   └── deployment-mode-v1.0.md     ← Addendum certification V1.0 et limites CLI `anu`
 ├── docs/
 │   └── manuel_utilisation_fr.md    ← Manuel utilisateur complet (FR)
 ├── templates/
@@ -297,12 +298,28 @@ ANU réutilise intégralement la configuration Hermes — aucune clé API ni end
 - `auth.json` absent/corrompu : callbacks Telegram désactivés, tracé `credentials_missing`.
 - `PROFILE` absent depuis shell brut : repli automatique sur `dev`.
 - `TELEGRAM_CHAT_ID` manquant en env → tracé `telegram_credentials_diag`, pas d'erreur fatale.
+- Voir aussi `references/deployment-mode-v1.0.md` pour les limites opérationnelles certifiées de la CLI `anu` et les règles d'appel direct `engine.py` en batch.
+
+---
+
+## Certification V1.0 — Recette N4 (2026-07-22)
+
+- Campagne retenue : **35 runs isolés**, 5 profils autorisés, 7 modes couverts.
+- Taux de succès : **94.2 %** en cold start multi-profils.
+- Interprétation des échecs : ils valident la robustesse du contrat P2, pas un défaut d'orchestration.
+- Document source : `references/deployment-mode-v1.0.md`
 
 ---
 
 ## Changelog
 
-### v0.9 — Juillet 2026 *(officialisation prod)*
+### v1.0.0 — Juillet 2026 *(prod-ready)*
+
+- **[certification]** Recette N4 validée : 35 runs, 5 profils, 7 modes.
+- **[docs]** Addendum `references/deployment-mode-v1.0.md` : voie d'exécution retenue, limitation CLI `anu`, roadmap V1.1.
+- **[maint]** README rebasé sur dépôt distant, métadonnées V1.0.0 ajoutées.
+
+### v0.9.1 — Juillet 2026
 
 - **[prod]** Pipeline 4 passes fonctionnel et stabilisé en production
 - **[prod]** Callback Telegram opérationnel (`response.status` fix)
