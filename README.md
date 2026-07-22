@@ -1,272 +1,339 @@
 # ANU Mind
 
-<div align="center">
-  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/deps-stdlib%20only-4caf50" alt="Stdlib only" />
-  <img src="https://img.shields.io/badge/Hermes-Skill-purple" alt="Hermes Skill" />
-  <img src="https://img.shields.io/badge/Status-ACTIF%20PROD-brightgreen" alt="Status" />
-</div>
+> Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.
+> Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes
+> en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
+> Callback automatique via Telegram à l'issue de chaque run détaché.
 
-<br>
-
-> **Moteur de raisonnement structuré multi-passes pour Hermes Agent.**<br>
-> Déclenché via la commande `anu` ou le slash `/anu`, il implémente le pattern d'ingénierie "Reflexion" pour atténuer les hallucinations des LLMs. Le système applique un pipeline 4 passes : génération → audit asynchrane → remédiation (conditionnelle) → validation. L'intégration OS est assurée par le wrapper `anu-tg` avec exécution en *transient unit* systemd.
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
+[![Hermes Skill](https://img.shields.io/badge/Hermes-Skill-purple)]()
+[![Version](https://img.shields.io/badge/version-0.9-blue)]()
+[![Status](https://img.shields.io/badge/Status-PROD-brightgreen)]()
 
 ---
 
-## 1. Principes d'Architecture
+## Principe
 
-ANU n’est pas un modèle fondationnel, mais un **orchestrateur d'inférence structurée**. Il contraint le LLM sous-jacent (Stepfun 3.7 flash via Hermes) à s'évaluer lui-même avant de délivrer son output. Cette approche casse le flux auto-régressif classique en injectant des étapes de validation déterministes.
+ANU n'est pas un modèle différent — c'est une **méthode d'utilisation structurée** du même LLM
+(Stepfun 3.7 flash via Hermes) en 4 étapes séquentielles et contrôlées.
 
-```text
- anu <topic>
-        │
- [P1] ━━┿━━ Génération initiale (Injection du System Prompt par Archétype)
-        │
- [P2] ━━┿━━ Audit Statique + Scoring Matriciel (5 dimensions, 0-10)
-        │
- [P3] ━━┿━━ Correction ciblée (Bifurcation si moyenne < 7.0 OU dim < 5)
-        │
- [P4] ━━┿━━ Synthèse finale & Compilation Markdown → livrable p4.md
-
+```
+anu "<topic>"
+       │
+  P1 ┃ Génération initiale (archétype choisi)
+       │
+  P2 ┃ Audit + scoring 5 dimensions (0-10)
+       │
+  P3 ┃ Correction ciblée — uniquement si mean < 7.0 OU dimension < 5
+       │                    timeout volontaire à 600s (phase longue)
+  P4 ┃ Validation finale → livrable p4.md
+       │
+       └── Callback Telegram automatique (mode --detach)
 ```
 
 ---
 
-## 2. Structure du Dépôt (Single Source of Truth)
+## Structure du dépôt
 
-```text
+```
 anu/
-├── tool.py                    ← Point d’entrée prod (lié vers ~/.local/bin/anu)
-├── scripts/
-│   ├── engine.py              ← Moteur 4-passes statique (zéro dépendance externe)
-│   └── patch_auth.py          ← Utilitaire de remédiation Auth Telegram
+├── tool.py                          ← Point d'entrée prod (symlink ~/.local/bin/anu)
+├── install.sh                       ← Installe anu-tg dans ~/.local/bin
 ├── install/
-│   ├── anu-tg.sh              ← Wrapper Bash (Injection Env & Routage TG)
-│   └── install.sh             ← Déploiement idempotent (ln -snf)
-├── references/                ← Documentation d'ingénierie et de conception
-│   ├── modes.md               ← Spécifications des 7 archétypes
-│   ├── stepfun-nous-backend.md
-│   ├── nous-model-naming.md
-│   ├── provider-backend.md
-│   └── ns-documentation.md
-├── templates/
-│   └── checkpoint_v1.json     ← Schéma contractuel d'état (State Machine)
-├── tests/
-│   ├── test_anu_tool.py
-│   └── test_engine_integration.py
-├── backups/                   ← Snapshots pré-déploiement (engine.py)
-├── tool/
-│   ├── anu_tool.py            ← Hook Hermes historique
-│   └── tool_definition.json   ← Registration du Skill dans l'Event Loop Hermes
+│   └── anu-tg.sh                    ← Wrapper shell : anu + --detach + chat_id
+├── scripts/
+│   ├── engine.py                    ← Moteur 4 passes (stdlib only, ~550 lignes)
+│   └── patch_auth.py                ← Utilitaire patch auth.json (maintenance)
+├── references/
+│   ├── architecture.md              ← Architecture technique détaillée
+│   ├── modes.md                     ← Spécifications 7 archétypes
+│   ├── anu-slash-command.md         ← Référence commande /anu
+│   ├── stepfun-nous-backend.md      ← Quirks réponse Stepfun/Nous
+│   ├── provider-backend.md          ← Règles provider/backend
+│   ├── nous-model-naming.md         ← Nommage modèles Nous
+│   ├── ns-documentation.md          ← Documentation NS
+│   └── run_passes-return-none-diagnosis.md
 ├── docs/
-│   └── manuel_utilisation_fr.md
-├── SKILL.md                   ← Metadata Hermes
+│   └── manuel_utilisation_fr.md    ← Manuel utilisateur complet (FR)
+├── templates/
+│   └── checkpoint_v1.json          ← Schéma checkpoint par passe
+├── backups/                         ← Snapshots horodatés engine.py
+├── tests/                           ← Tests unitaires et intégration
+├── SKILL.md                         ← Définition skill Hermes
 └── README.md
+```
 
+> `tool/` contient le squelette architecte Claude (référence).
+> `tool.py` à la racine est l'implémentation réelle en production.
+
+---
+
+## Installation
+
+```bash
+# Symlink anu → tool.py (déjà effectué sur pytheas)
+~/.local/bin/anu → /home/g33ky/.hermes/skills/autonomous-ai-agents/anu-mind/tool.py
+
+# Installer anu-tg (wrapper Telegram)
+./install.sh
+# Crée : ~/.local/bin/anu-tg → install/anu-tg.sh
 ```
 
 ---
 
-## 3. Déploiement & Intégration Système
+## Usage
 
-L'installation s'appuie sur des liens symboliques pour garantir que le dépôt Git reste l'unique source de vérité. Le script d'installation garantit l'idempotence des chemins utilisateur.
-
-```bash
-# Provisionnement et sécurisation de l'environnement CLI
-bash install/install.sh
-
-# Topologie post-déploiement attendue :
-# ~/.local/bin/anu    -> <repo>/tool.py
-# ~/.local/bin/anu-tg -> <repo>/install/anu-tg.sh
-
-```
-
----
-
-## 4. Usage & Interface CLI
-
-Le binaire est conçu pour fonctionner en mode synchrone (bloquant) ou asynchrone (détaché via systemd).
+### Commande `anu`
 
 ```bash
-anu <topic>               # Cold start (détection auto de l'archétype)
-anu <topic> --mode N      # Forçage de l'archétype métier (1-7)
-anu <topic> --detach      # Exécution asynchrone + Callback Telegram IPC
-anu --resume <run_id>     # Reprise sur échec (réhydrate le contexte)
-anu --status              # Topologie des 20 derniers runs
-
+anu "<topic>"                     # mode auto-détecté, cold start
+anu "<topic>" --mode N            # archétype forcé (1-7)
+anu "<topic>" --detach            # exécution arrière-plan + callback Telegram
+anu "<topic>" --context           # injecte les 5 derniers messages de la session
+anu "<topic>" --context N         # injecte les N derniers messages de la session
+anu --resume <run_id>             # reprise pipeline depuis dernier checkpoint
+anu --status                      # liste 20 derniers runs
 ```
 
-### Exemples d'Invocation
+### Wrapper `anu-tg`
+
+```bash
+anu-tg "<topic>"                  # mode TEACHER + detach + callback Telegram
+anu-tg "<topic>" <chat_id>        # override chat_id destination
+```
+
+### Exemples
 
 ```bash
 anu "audit SSH hardening" --mode 5
 anu "refactor parser.py" --mode 2
 anu "architecture NAS backup" --mode 1 --detach
+anu "analyse ce contexte" --context
+anu "approfondis ce point" --context 10
 anu --status
 anu --resume 20260719_132400
-anu "rapport conformité" --mode 6
-anu "benchmark stockage" --mode 7
-
+anu-tg "explique le protocole BGP"
 ```
 
-> **Manuel utilisateur FR :** `docs/manuel_utilisation_fr.md`
+---
+
+## Modes (archétypes)
+
+| Mode | Nom | Domaine | Temp. | Max tokens | Détection auto |
+|---|---|---|---|---|---|
+| 1 | ARCHITECT | Architecture, infrastructure, design | 0.7 | 8192 | `architecture`, `design`, `schema`, `stack` |
+| 2 | CODER | Code, debug, scripts (**défaut**) | 0.2 | 8192 | `code`, `debug`, `script`, `refactor`, `bug` |
+| 3 | TEACHER | Documentation, tutoriels, explications | 0.6 | 8192 | `explique`, `tutoriel`, `documentation` |
+| 4 | PROTOCOL | Procédures, specs, workflows | 0.0 | 4096 | `procedure`, `spec`, `protocole`, `yaml` |
+| 5 | AUDITOR | Sécurité, audit, risques | 0.3 | 4096 | `audit`, `securite`, `risque` |
+| 6 | WRITER | Rédaction, rapports, synthèses | 0.8 | 8192 | `redige`, `article`, `rapport` |
+| 7 | RESEARCHER | Recherche, comparaisons, faits | 0.2 | 8192 | `recherche`, `compare`, `benchmark` |
+
+Fallback si aucun match : mode 2 (CODER).
 
 ---
 
-## 5. Matrices des Archétypes (Modes)
+## Pipeline détaillé
 
-Le routage heuristique sélectionne le `system_prompt` optimal si aucun flag `--mode` n'est explicitement fourni.
+### Règles d'exécution
 
-| Mode | Codename | Domaine de compétence | Triggers Heuristiques (Regex) |
-| --- | --- | --- | --- |
-| 1 | `ARCHITECT` | Architecture logicielle, topologie infra | `architecture, design, schema, stack` |
-| 2 | `CODER` | Génération de code, refactoring, debug | `code, debug, script, refactor` *(Défaut)* |
-| 3 | `TEACHER` | Vulgarisation technique, documentation | `explique, tutoriel, documentation` |
-| 4 | `PROTOCOL` | Workflows, standardisation, specs | `procedure, spec, protocole, yaml` |
-| 5 | `AUDITOR` | Hardening, analyse de risques, CVEs | `audit, securite, risque` |
-| 6 | `WRITER` | Rédaction formelle, rapports hiérarchiques | `redige, article, rapport` |
-| 7 | `RESEARCHER` | Benchmark, analyse comparative | `recherche, compare, benchmark` |
+| Passe | Rôle | Condition | Timeout |
+|---|---|---|---|
+| P1 | Génération initiale | Toujours | 600s |
+| P2 | Audit + scoring 5 dimensions | Toujours | 600s |
+| P3 | Correction ciblée | `mean < 7.0` OU dimension `< 5` | **600s (volontaire)** |
+| P4 | Validation finale | Toujours | 600s |
 
----
+Le timeout P3 à 600 secondes est intentionnel — cette phase nécessite le temps pour produire
+une correction de qualité sur des sujets complexes.
 
-## 6. Moteur d'Audit P2 : Dimensions de Scoring
+### Score P2 — 5 dimensions
 
-Si la moyenne globale chute sous **7.0/10** ou si une dimension critique (risques, factualité) obtient une note **< 5**, le moteur bifurque sur P3 (Remédiation) avant de compiler P4. Les poids sont stricts et le LLM doit justify chaque décimale.
+| Dimension | Description |
+|---|---|
+| `factualite` | Exactitude des faits (0-10) |
+| `couverture` | Exhaustivité (0-10) |
+| `coherence` | Cohérence logique (0-10) |
+| `risques` | Identification des risques (0-10) |
+| `clarte` | Lisibilité (0-10) |
 
-| Dimension | Vecteur d'analyse | Seuil d'Alerte |
-| --- | --- | --- |
-| `factualite` | Exactitude, absence d'hallucinations techniques | < 5 (Critique) |
-| `couverture` | Exhaustivité de la réponse face au prompt initial | < 5 |
-| `coherence` | Linéarité logique, absence de contradictions internes | < 5 |
-| `risques` | Identification des impacts collatéraux (sécu/prod) | < 5 (Critique) |
-| `clarte` | Lisibilité, formatage Markdown, scannabilité | < 5 |
+`mean >= 7.0` ET aucune dimension `< 5` → P3 skipped, passage direct à P4.
+Plafond anti-boucle : 3 passes P3 maximum (`MAX_CORRECTION_PASSES = 3`).
 
----
+### Artefacts par run
 
-## 7. Asynchronisme & Observabilité (Mode Detach)
-
-L'utilisation de `--detach` isole le processus de la session shell courante via `systemd-run`.
-
-* **Process Isolation :** Création d'une *transient unit* (`systemd-run --user --unit=anu-run-<run_id>`). Retour main au shell en < 2s.
-* **Environment Propagation :** Les variables critiques (`TELEGRAM_CHAT_ID`, `DBUS_SESSION_BUS_ADDRESS`, `HERMES_PROFILE`) sont poussées en RAM dans le contexte de l'unité.
-* **Callback Routing :** Le livrable final (P4) est streamé via le broker Telegram. Les payloads massifs (> 4096 octets) sont automatiquement fragmentés.
-
-### Structure des Artefacts de Run
-
-```text
+```
 ~/.hermes/profiles/<profile>/cron/output/anu/<run_id>/
 ├── p1.md / p1.json
-├── p2.md / p2.json    ← Matrice de scoring
-├── p3.md / p3.json    ← Instancié uniquement si P2 déclenche un trigger
-├── p4.md / p4.json    ← Livrable consolidé
-└── .manifest.json     ← Écriture atomique (.tmp + os.replace)
-
+├── p2.md / p2.json   ← score 5 dimensions
+├── p3.md / p3.json   ← si correction nécessaire
+├── p4.md / p4.json   ← livrable principal
+└── .manifest.json    ← écriture atomique (.tmp + os.replace)
 ```
 
 ---
 
-## 8. Logging
+## Option `--context` — Injection de contexte session
 
-```text
+| Syntaxe | Comportement |
+|---|---|
+| *(absent)* | Cold start — aucun contexte injecté |
+| `--context` | Injecte les 5 derniers messages de la session active |
+| `--context N` | Injecte les N derniers messages de la session active |
+
+Le contexte est préfixé au topic avant injection dans P1.
+Utile pour approfondir ou étendre une réflexion en cours de session Hermes.
+
+---
+
+## Mode `--detach` (arrière-plan)
+
+- Fork via `systemd-run --user --unit=anu-run-<run_id>`
+- Retour shell < 2 s garanti
+- Callback Telegram automatique à la fin (succès ou échec)
+- Environnement injecté : `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `HERMES_HOME`,
+  `PROFILE`, `HOME`, `USER`, `PATH`, `TELEGRAM_CHAT_ID`
+
+### Format callback Telegram
+
+**Succès :**
+```
+[ANU | ARCHITECT | Run 20260719_132400 | Score P2: 8.2/10]
+<contenu p4.md — fragmenté en chunks ≤ 4096 caractères>
+```
+
+**Échec :**
+```
+🚨 [ANU - ERREUR FATALE] Échec pipeline.
+Reprise : /anu --resume 20260719_132400
+Erreur : <détail>
+```
+
+---
+
+## Wrapper `anu-tg`
+
+`install/anu-tg.sh` est un raccourci opiné pour les invocations Telegram courantes :
+
+```bash
+# Ce que fait anu-tg :
+export TELEGRAM_CHAT_ID="${2:-$DEFAULT_CHAT_ID}"   # -5380549950 par défaut
+anu "$1" --mode 3 --detach                          # mode TEACHER, arrière-plan
+```
+
+`DEFAULT_CHAT_ID` est défini dans `install/anu-tg.sh` — modifier directement si nécessaire.
+
+---
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `HERMES_PROFILE` | `dev` | Profile Hermes actif |
+| `PROFILE` | `dev` | Alias HERMES_PROFILE (compatibilité) |
+| `HERMES_HOME` | `~/.hermes/profiles/<profile>` | Racine Hermes du profil |
+| `TELEGRAM_BOT_TOKEN` | — | Override token (prioritaire sur auth.json) |
+| `TELEGRAM_CHAT_ID` | — | Override chat_id destination |
+
+**Lecture des credentials Telegram (priorité décroissante) :**
+
+1. Env vars `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+2. `~/.hermes/auth.json` → `providers.telegram` (`access_token`, `bot_token` ou `token`)
+3. `~/.hermes/config.yaml` → section `telegram:`
+
+---
+
+## Backend LLM
+
+ANU réutilise intégralement la configuration Hermes — aucune clé API ni endpoint codé en dur.
+
+```
+~/.hermes/config.yaml    ← model.provider + model.default + base_url
+~/.hermes/auth.json      ← access_token + refresh_token + inference_base_url
+```
+
+- Modèle résolu : `_resolved_model("auto")` → `model.default` → `stepfun/step-3.7-flash:free`
+- Endpoint : `_resolved_base_url()` → `config.base_url` sinon `auth.inference_base_url`
+- Refresh token OAuth2 automatique sur 401/403
+- Extraction réponse Stepfun : `content` → `reasoning` → `reasoning_details[*].text`
+
+---
+
+## Logging
+
+```
 ~/.hermes/profiles/<profile>/logs/hermes_YYYY-MM-DD.log
 ```
 
 Événements tracés (`[AUTONOMOUS] [anu_mind]`) :
 
 | Événement | Description |
-| --- | --- |
+|---|---|
 | `run_start` | Début run synchrone |
 | `run_start_detach` | Début run détaché |
-| `run_completed` | Fin OK avec score et nb passes |
-| `run_failed` | Erreur avec traceback |
+| `run_completed` | Fin OK — score P2 + nb passes |
+| `run_failed` | Erreur avec détail |
 | `run_resume` | Reprise depuis checkpoint |
-| `telegram_push_start` | Tentative envoi (token masqué) |
-| `telegram_push_failed` | Échec envoi avec raison |
+| `telegram_push_start` | Tentative envoi |
+| `telegram_push_success` | Envoi confirmé |
+| `telegram_push_failed` | Échec avec raison |
+| `telegram_credentials_diag` | Diagnostic credentials manquants |
 
 ---
 
-## 9. Posture de Sécurité & Résolution des Secrets
+## Sécurité
 
-L'architecture ANU est conçue selon le principe du moindre privilège (Zero Trust local) :
-
-* **Memory-Only Secrets :** Les tokens ne sont jamais passés en arguments CLI (`argv`) pour éviter la fuite dans `ps aux` ou le `.bash_history`.
-* **Log Masking :** Le token Telegram est dynamiquement tronqué dans le logger (`abcd****...wxyz`).
-* **Code Execution :** Aucune fonction dynamique de type `eval()`, `exec()` ou `subprocess` direct depuis le LLM.
-
-**Hiérarchie de résolution des credentials :**
-
-1. Environnement dynamique enfant (`TELEGRAM_BOT_TOKEN`) injecté par wrapper.
-2. Profil courant (`~/.hermes/auth.json`).
-3. Configuration système (`config.yaml`).
+- Token Telegram **jamais en clair dans les logs** (`_mask_token()` → `abcd****...wxyz`)
+- `scrub_secrets()` appliqué sur toute sortie LLM avant écriture disque
+- Aucun secret dans les checkpoints ou artefacts de run
+- Inputs : `topic`, `--mode`, `--context` uniquement — pas d'`eval()`, `exec()`, ni `subprocess` avec input utilisateur
 
 ---
 
-## 10. Variables d’Environnement
+## Limitations connues
 
-| Variable | Défaut | Rôle |
-| --- | --- | --- |
-| `HERMES_PROFILE` | `dev` | Profile Hermes actif |
-| `HERMES_HOME` | `~/.hermes` | Racine Hermes |
-| `TELEGRAM_BOT_TOKEN` | — | Override token (prioritaire sur auth.json) |
-| `TELEGRAM_CHAT_ID` | — | Override chat_id |
-
-**Lecture des credentials Telegram (priorité décroissante) :**
-1. Env vars `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
-2. `~/.hermes/auth.json` → `providers.telegram`
-3. `~/.hermes/config.yaml` → section `telegram:`
+- Erreur bash `impossible de régler le groupe de processus du terminal` : attendue hors terminal de contrôle, sans impact fonctionnel.
+- `auth.json` absent/corrompu : callbacks Telegram désactivés, tracé `credentials_missing`.
+- `PROFILE` absent depuis shell brut : repli automatique sur `dev`.
+- `TELEGRAM_CHAT_ID` manquant en env → tracé `telegram_credentials_diag`, pas d'erreur fatale.
 
 ---
 
-## 11. Installation
+## Changelog
 
-```bash
-# Le skill est déjà installé via Hermes
-# Points d’entrée :
-ls -la ~/.local/bin/anu ~/.local/bin/anu-tg
-# ~/.local/bin/anu       → <repo>/tool.py
-# ~/.local/bin/anu-tg    → <repo>/install/anu-tg.sh
+### v0.9 — Juillet 2026 *(officialisation prod)*
 
-# Installer/mettre à jour les liens :
-bash <repo>/install/install.sh
+- **[prod]** Pipeline 4 passes fonctionnel et stabilisé en production
+- **[prod]** Callback Telegram opérationnel (`response.status` fix)
+- **[feat]** `--context [N]` : injection de contexte session (défaut 5 messages, cold start si absent)
+- **[feat]** `anu-tg` : wrapper shell Telegram (mode TEACHER, detach, chat_id configurable)
+- **[feat]** `--detach` : fork `systemd-run --user` avec injection complète d'environnement
+- **[feat]** `--resume` : reprise pipeline complet depuis dernier checkpoint valide
+- **[feat]** `--status` : listing 20 derniers runs avec score P2
+- **[fix]** Timeout P3 à 600s (volontaire — phase de correction longue)
+- **[fix]** `DEFAULT_RUN_ROOT` / `ENGINE_DEFAULT` respectent `HERMES_PROFILE` env var
+- **[fix]** Token Telegram masqué dans tous les logs
+- **[fix]** Manifest écriture atomique `.tmp` + `os.replace`
+- **[fix]** Diagnostic credentials Telegram précis (`credentials_diag` log)
+- **[maint]** `scripts/patch_auth.py` : utilitaire maintenance auth.json
+- **[docs]** `docs/manuel_utilisation_fr.md` : manuel complet FR
+- **[docs]** `references/architecture.md` : architecture technique détaillée
 
-# Vérification
-anu --help
-anu --status
-```
+### v0.1 — Juin 2026 *(prototype)*
 
----
-
-## 12. Limitations Connues
-
-* Erreur bash `impossible de régler le groupe de processus du terminal` : attendue hors terminal de contrôle, sans impact fonctionnel
-* `auth.json` absent/corrompu : callbacks Telegram désactivés, tracé en `credentials_missing`
-* `PROFILE` absent depuis un shell brut : repli automatique sur `dev`
-
----
-
-## 13. Changelog
-
-### v0.9.1 — Juillet 2026
-
-* **[feat]** Implémentation du déploiement idempotent des symlinks système via `install.sh` (`mkdir -p` + `ln -snf`).
-* **[feat]** Intégration du script de routage Telegram (`anu-tg.sh`) dans le contrôle de version.
-* **[maint]** Migration vers un modèle de Single Source of Truth intégral (zéro modification manuelle dans `~/.local/bin/`).
-
-### v0.9.0 — Juillet 2026
-
-* Validation du moteur 4-passes statique.
-* Ajout des hooks `systemd-run` (mode `--detach`).
-* Création de la machine d'état (`--status`, `--resume`).
+- Pipeline 4 passes initial (`engine.py`, stdlib only)
+- Intégration Hermes via `execute_code`
+- 7 archétypes, checkpoints JSON, scoring P2
 
 ---
 
 ## Mainteneur
 
-**Coresynq IT** — Usage privé exclusif.  
-Direction : g33ky.  
-Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis Pytheas.
+**Pytheas Infrastructure** — Usage interne exclusif.
+Architecture : **Claude (Anthropic)** via MCP GitHub.
+Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
 
 <div align="center">
-  <sub>Composant de l’écosystème <strong>Hermes</strong> — Coresynq IT 🌿</sub>
+  <sub>Composant de l'écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
 </div>
