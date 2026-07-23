@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ANU Mind CLI wrapper — Slash `/anu` triggers this binary.
-Orchestration: Python, argparse, calls engine.py via subprocess.
+ANU Mind CLI wrapper — point d'entrée `anu`.
+Orchestration : Python, argparse, appelle engine.py via subprocess.
 
-Fixes v1.0.1:
-  - DEFAULT_LOG_DIR / _log_line path normalized to single Hermes logs dir
-  - removed stale --context references from README/tooling docs
-  - DEFAULT_RUN_ROOT / ENGINE_DEFAULT honour HERMES_PROFILE env var
-  - _resume() now resumes full pipeline from last completed pass
-  - _load_telegram_credentials() token never logged in clear
-  - token masked in all _log_line() calls
+v1.0.1 :
+  - Chemin log corrigé : DEFAULT_LOG_DIR = _HERMES_HOME / "logs"
+  - `--context` retiré (feature non implémentée)
+  - Versions alignées v1.0.x partout
 """
 
 import argparse
@@ -29,7 +26,6 @@ from zoneinfo import ZoneInfo
 # PATHS / PROFILE
 # ---------------------------------------------------------------------------
 HOME = Path.home()
-# PATHS / PROFILE
 _PROFILE = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE", "dev")
 _HERMES_HOME = Path(
     os.environ.get(
@@ -38,10 +34,10 @@ _HERMES_HOME = Path(
     )
 )
 DEFAULT_RUN_ROOT = _HERMES_HOME / "cron" / "output" / "anu"
-DEFAULT_LOG_DIR = _HERMES_HOME / "logs"
+DEFAULT_LOG_DIR  = _HERMES_HOME / "logs"   # FIX v1.0.1 : chemin direct, sans doublon
 
-# Structural fix (Dette migratoire N4): moteur global invariant quel que soit le profil appelant.
-BASE_DIR = Path(os.path.dirname(os.path.realpath(__file__)))
+# Dette migratoire N4 : moteur global invariant quel que soit le profil appelant.
+BASE_DIR       = Path(os.path.dirname(os.path.realpath(__file__)))
 ENGINE_DEFAULT = Path("/home/g33ky/.hermes/skills/autonomous-ai-agents/anu-mind/scripts/engine.py")
 
 
@@ -92,7 +88,7 @@ def _now_iso() -> str:
 
 def _log_line(msg: str) -> None:
     day      = datetime.now().strftime("%Y-%m-%d")
-    log_path = DEFAULT_LOG_DIR / f"hermes_{day}.log"
+    log_path = DEFAULT_LOG_DIR / f"hermes_{day}.log"   # FIX v1.0.1
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(f"[{_now_iso()}] [AUTONOMOUS] [anu_mind] {msg}\n")
@@ -177,7 +173,7 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
     Resolution order (first match wins):
       1) Dynamic context from Gateway: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
       2) Profile context: HERMES_HOME/profiles/<active>/auth.json
-      3) Global fallback: HERMES_HOME/auth.json
+      3) Global fallback: ~/.hermes/auth.json
       4) Profile config.yaml shallow parse
     """
     missing = []
@@ -199,7 +195,7 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
 
     # 1) Dynamic context from Gateway
     dyn_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    dyn_chat = os.getenv("TELEGRAM_CHAT_ID")
+    dyn_chat  = os.getenv("TELEGRAM_CHAT_ID")
     if dyn_token:
         return dyn_token, dyn_chat
     if not dyn_token:
@@ -215,7 +211,7 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
             return got
 
     # 3) Global auth.json
-    global_auth = Path("/home/g33ky/.hermes/auth.json")
+    global_auth = Path.home() / ".hermes" / "auth.json"
     if global_auth.exists():
         got = _read_auth(global_auth)
         if got:
@@ -227,11 +223,9 @@ def _load_telegram_credentials() -> tuple[str, str | None]:
         txt = config_path.read_text(encoding="utf-8", errors="ignore")
         m = re.search(r"telegram:\s*\n(?:[^\n]*\n)*?\s*(?:bot_token|token):\s*[\"']?([^\"'\n]+)", txt)
         if m:
-            token = m.group(1).strip()
-            chat_id = os.getenv("TELEGRAM_CHAT_ID")
-            return token, chat_id
+            return m.group(1).strip(), os.getenv("TELEGRAM_CHAT_ID")
 
-    _log_line(f"telegram_push_failed reason=credentials_missing missing={sorted(set(missing))}")
+    _log_line(f"telegram_credentials_diag missing={sorted(set(missing))}")
     return "", None
 
 
@@ -246,7 +240,7 @@ def _telegram_push(text: str, chat_id: str | None = None, run_id: str | None = N
         _log_line("telegram_push_failed reason=credentials_missing missing=chat_id")
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url     = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({
         "chat_id": chat,
         "text": text,
@@ -258,7 +252,7 @@ def _telegram_push(text: str, chat_id: str | None = None, run_id: str | None = N
     try:
         _log_line("telegram_push_start")
         with urllib.request.urlopen(req, timeout=180) as response:
-            ok = response.status == 200
+            ok  = response.status == 200
             rid = run_id or "-"
             if ok:
                 _log_line(f"telegram_push_success run_id={rid} status=ok target_chat={chat}")
@@ -291,25 +285,20 @@ def _split_for_telegram(text: str, limit: int = 4096) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _exec_detached(run_dir: Path, topic: str, mode: int, *, reply_to: str | None = None, bot_token: str | None = None) -> None:
-    script      = str(Path(__file__).resolve())
-    uid         = str(os.getuid())
-    env         = os.environ.copy()
+    script = str(Path(__file__).resolve())
+    uid    = str(os.getuid())
+    env    = os.environ.copy()
 
-    if "XDG_RUNTIME_DIR" not in env:
-        env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-    if "DBUS_SESSION_BUS_ADDRESS" not in env:
-        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
-    if "HOME" not in env:
-        env["HOME"] = os.path.expanduser("~")
-    if "USER" not in env:
-        env["USER"] = "g33ky"
-    if "PROFILE" not in env:
-        env["PROFILE"] = "dev"
-    if "HERMES_HOME" not in env:
-        env["HERMES_HOME"] = f"/home/g33ky/.hermes/profiles/{env['PROFILE']}"
+    env.setdefault("XDG_RUNTIME_DIR",        f"/run/user/{uid}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+    env.setdefault("HOME",  os.path.expanduser("~"))
+    env.setdefault("USER",  HOME.name)
+    env.setdefault("PROFILE",     "dev")
+    env.setdefault("HERMES_HOME", f"/home/{HOME.name}/.hermes/profiles/{env['PROFILE']}")
 
-    chat_for_child = reply_to or env.get('TELEGRAM_CHAT_ID') or env.get('HERMES_SESSION_CHAT_ID', '')
-    token_for_child = bot_token or env.get('TELEGRAM_BOT_TOKEN', '')
+    chat_for_child  = reply_to or env.get("TELEGRAM_CHAT_ID") or env.get("HERMES_SESSION_CHAT_ID", "")
+    token_for_child = bot_token or env.get("TELEGRAM_BOT_TOKEN", "")
+
     cmd = [
         "systemd-run", "--user",
         "--unit",    f"anu-run-{run_dir.name}",
@@ -325,12 +314,8 @@ def _exec_detached(run_dir: Path, topic: str, mode: int, *, reply_to: str | None
         "--mode",   str(mode),
         "--run-id", run_dir.name,
     ]
-    masked_cmd = ' '.join(
-        f"--setenv=TELEGRAM_BOT_TOKEN=****{token_for_child[-4:]}" if token_for_child else part
-        if part.startswith("--setenv=TELEGRAM_BOT_TOKEN=") else part
-        for part in cmd
-    )
-    _log_line(f"systemd-run cmd=`{masked_cmd}`")
+    masked = token_for_child[-4:] if token_for_child else ""
+    _log_line(f"systemd-run unit=anu-run-{run_dir.name} mode={mode} token=****{masked}")
     subprocess.Popen(
         cmd, env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
@@ -344,7 +329,7 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
         summary = _run_pipeline(run_dir, topic, mode)
     except Exception as exc:
         msg = (
-            f"\U0001f6a8 [ANU - ERREUR FATALE] Échec pipeline.\n"
+            f"\U0001f6a8 [ANU - ERREUR FATALE] \u00c9chec pipeline.\n"
             f"Reprise : /anu --resume {run_id}\nErreur : {exc!r}"
         )
         _telegram_push(msg, run_id=run_id)
@@ -362,7 +347,7 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
             f"\U0001f6a8 [ANU - ERREUR FATALE] Livrable p4.md manquant.\n"
             f"Reprise : /anu --resume {run_id}"
         )
-        _telegram_push(msg)
+        _telegram_push(msg, run_id=run_id)
         _log_line(f"run_failed missing_p4 run_id={run_id}")
         return
 
@@ -387,11 +372,9 @@ def _run_pipeline_with_callback(run_dir: Path, topic: str, mode: int) -> None:
 
 def _detect_mode(topic: str) -> int:
     t = topic.lower()
-    # Priorité absolue à l'intention pédagogique : matching par mot
-    teacher_keywords = MODE_KEYWORDS.get(3, [])
-    if any(re.search(rf"\b{re.escape(k)}\b", t) for k in teacher_keywords):
+    # Priorité absolue TEACHER : matching par mot entier
+    if any(re.search(rf"\b{re.escape(k)}\b", t) for k in MODE_KEYWORDS.get(3, [])):
         return 3
-    # Matching substring standard pour les autres modes
     for mid, keywords in MODE_KEYWORDS.items():
         if mid == 3:
             continue
@@ -403,33 +386,30 @@ def _detect_mode(topic: str) -> int:
 def _run_pipeline(run_dir: Path, topic: str, mode: int) -> dict:
     summary: dict = {"p1": None, "p2": None, "p3": None, "p4": None}
 
-    # P1
-    _info(f"[ANU | {MODES[mode]}] P1 génération... ⏳")
+    _info(f"[ANU | {MODES[mode]}] P1 g\u00e9n\u00e9ration... \u23f3")
     p1_md, p1_ck = _engine_pass(run_dir, "p1", topic, mode)
     summary["p1"] = {"status": p1_ck.get("status"), "file": "p1.md"}
     _manifest_update(run_dir, {"p1": summary["p1"]})
-    _info(f"[ANU | {MODES[mode]}] P1 ✅")
+    _info(f"[ANU | {MODES[mode]}] P1 \u2705")
 
-    # P2
-    _info(f"[ANU | {MODES[mode]}] P2 audit... ⏳")
+    _info(f"[ANU | {MODES[mode]}] P2 audit... \u23f3")
     p2_md, p2_ck = _engine_pass(run_dir, "p2", topic, mode, input_file=p1_md)
     mean, score  = _score_from_p2(run_dir / "p2.json")
     summary["p2"] = {"status": p2_ck.get("status"), "file": "p2.md", "score": score, "mean": mean}
     _manifest_update(run_dir, {"p2": summary["p2"]})
     _info(f"[ANU | {MODES[mode]}] P2 score: {mean:.1f}/10")
 
-    # P3 conditionnel
     CRITICAL_LOW = 5
     needs_p3 = mean < 7.0 or any(
         (score.get(d) or 10) < CRITICAL_LOW
         for d in ["factualite", "couverture", "coherence", "risques", "clarte"]
     )
     if needs_p3:
-        _info(f"[ANU | {MODES[mode]}] P3 correction... ⏳")
+        _info(f"[ANU | {MODES[mode]}] P3 correction... \u23f3")
         p3_md, p3_ck = _engine_pass(run_dir, "p3", topic, mode, input_file=p2_md)
         summary["p3"] = {"status": p3_ck.get("status"), "file": "p3.md"}
         _manifest_update(run_dir, {"p3": summary["p3"]})
-        _info(f"[ANU | {MODES[mode]}] P3 ✅")
+        _info(f"[ANU | {MODES[mode]}] P3 \u2705")
         last_input = p3_md
     else:
         _info(f"[ANU | {MODES[mode]}] P3 skipped (score OK)")
@@ -437,12 +417,11 @@ def _run_pipeline(run_dir: Path, topic: str, mode: int) -> dict:
         _manifest_update(run_dir, {"p3": summary["p3"]})
         last_input = p2_md
 
-    # P4
-    _info(f"[ANU | {MODES[mode]}] P4 validation... ⏳")
+    _info(f"[ANU | {MODES[mode]}] P4 validation... \u23f3")
     _, p4_ck = _engine_pass(run_dir, "p4", topic, mode, input_file=last_input)
     summary["p4"] = {"status": p4_ck.get("status"), "file": "p4.md"}
     _manifest_update(run_dir, {"p4": summary["p4"]})
-    _info(f"[ANU | {MODES[mode]}] P4 ✅")
+    _info(f"[ANU | {MODES[mode]}] P4 \u2705")
 
     return summary
 
@@ -461,7 +440,7 @@ def _print_help() -> None:
         "  anu \"refactor parser.py\" --mode 2\n"
         "  anu --status\n"
         "  anu --resume 20260718_143022\n"
-        "  anu \"Résumé BGP\" --mode 1 --detach\n"
+        "  anu \"R\u00e9sum\u00e9 BGP\" --mode 1 --detach\n"
     )
 
 
@@ -492,16 +471,12 @@ def _status(run_root: Path) -> None:
 
 
 def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
-    """
-    Reprend le pipeline complet depuis la première passe non complétée.
-    FIX v1.0.1: exécution de toutes les passes manquantes (pas seulement la suivante).
-    """
+    """Reprend le pipeline complet depuis la premi\u00e8re passe non compl\u00e9t\u00e9e."""
     rd = run_root / run_id
     if not rd.exists():
         print(f"Run not found: {run_id}")
         raise SystemExit(1)
 
-    # Déterminer les passes complétées depuis le manifest
     completed: set[str] = set()
     mf = rd / ".manifest.json"
     if mf.exists():
@@ -513,11 +488,9 @@ def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
             }
         except Exception:
             pass
-    # Fallback sur les .json présents
     if not completed:
         completed = {f.stem for f in rd.glob("*.json") if not f.name.startswith(".")}
 
-    # Récupérer topic + mode depuis le dernier checkpoint disponible
     topic = topic_hint
     mode  = 2
     for p in ["p1", "p2", "p3", "p4"]:
@@ -539,23 +512,21 @@ def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
         print(f"Run {run_id} already complete (P4 done).")
         return
 
-    print(f"[ANU] Reprise run={run_id} complétées={sorted(completed)} mode={mode}")
+    print(f"[ANU] Reprise run={run_id} compl\u00e9t\u00e9es={sorted(completed)} mode={mode}")
     _log_line(f"run_resume run_id={run_id} completed={sorted(completed)} mode={mode}")
 
-    # Relancer depuis la première passe non complétée
-    # On reconstruit le pipeline en passant les passes déjà faites
     p1_md = rd / "p1.md"
     p2_md = rd / "p2.md"
     p3_md = rd / "p3.md"
 
     if "p1" not in completed:
-        _info(f"[ANU | {MODES[mode]}] P1 génération... ⏳")
+        _info(f"[ANU | {MODES[mode]}] P1 g\u00e9n\u00e9ration... \u23f3")
         p1_md, p1_ck = _engine_pass(rd, "p1", topic, mode)
         _manifest_update(rd, {"p1": {"status": p1_ck.get("status"), "file": "p1.md"}})
-        _info(f"[ANU | {MODES[mode]}] P1 ✅")
+        _info(f"[ANU | {MODES[mode]}] P1 \u2705")
 
     if "p2" not in completed:
-        _info(f"[ANU | {MODES[mode]}] P2 audit... ⏳")
+        _info(f"[ANU | {MODES[mode]}] P2 audit... \u23f3")
         p2_md, p2_ck = _engine_pass(rd, "p2", topic, mode, input_file=p1_md)
         mean, score  = _score_from_p2(rd / "p2.json")
         _manifest_update(rd, {"p2": {"status": p2_ck.get("status"), "file": "p2.md", "score": score, "mean": mean}})
@@ -563,12 +534,15 @@ def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
     else:
         mean, score = _score_from_p2(rd / "p2.json") if (rd / "p2.json").exists() else (0.0, {})
 
-    needs_p3 = mean < 7.0 or any((score.get(d) or 10) < 5 for d in ["factualite", "couverture", "coherence", "risques", "clarte"])
+    needs_p3 = mean < 7.0 or any(
+        (score.get(d) or 10) < 5
+        for d in ["factualite", "couverture", "coherence", "risques", "clarte"]
+    )
     if needs_p3 and "p3" not in completed:
-        _info(f"[ANU | {MODES[mode]}] P3 correction... ⏳")
+        _info(f"[ANU | {MODES[mode]}] P3 correction... \u23f3")
         p3_md, p3_ck = _engine_pass(rd, "p3", topic, mode, input_file=p2_md)
         _manifest_update(rd, {"p3": {"status": p3_ck.get("status"), "file": "p3.md"}})
-        _info(f"[ANU | {MODES[mode]}] P3 ✅")
+        _info(f"[ANU | {MODES[mode]}] P3 \u2705")
         last_input = p3_md
     elif not needs_p3:
         _manifest_update(rd, {"p3": {"status": "skipped", "file": None}})
@@ -577,25 +551,25 @@ def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
         last_input = p3_md if p3_md.exists() else p2_md
 
     if "p4" not in completed:
-        _info(f"[ANU | {MODES[mode]}] P4 validation... ⏳")
+        _info(f"[ANU | {MODES[mode]}] P4 validation... \u23f3")
         _, p4_ck = _engine_pass(rd, "p4", topic, mode, input_file=last_input)
         _manifest_update(rd, {"p4": {"status": p4_ck.get("status"), "file": "p4.md"}})
-        _info(f"[ANU | {MODES[mode]}] P4 ✅")
+        _info(f"[ANU | {MODES[mode]}] P4 \u2705")
 
     p4_md_path = rd / "p4.md"
     if p4_md_path.exists():
-        _info("\n" + "=" * 40 + "\n[ANU] LIVRAISON (resumé)\n" + "=" * 40)
+        _info("\n" + "=" * 40 + "\n[ANU] LIVRAISON (resum\u00e9)\n" + "=" * 40)
         print(_read_md(p4_md_path))
     _log_line(f"run_resume_completed run_id={run_id} mode={mode}")
 
 
 # ---------------------------------------------------------------------------
-# MAIN / DISPATCHER
+# MAIN
 # ---------------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="anu", add_help=False)
-    parser.add_argument("topic", nargs="?", default=None)
+    parser.add_argument("topic",   nargs="?", default=None)
     parser.add_argument("--mode",   type=int, default=None)
     parser.add_argument("--resume", default=None)
     parser.add_argument("--status", action="store_true")
@@ -627,21 +601,21 @@ def main() -> int:
         return 2
 
     run_id  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    current_profile = os.environ.get("PROFILE", "dev")
-    base_profile_dir = os.environ.get(
+    profile = os.environ.get("PROFILE", "dev")
+    hermes_home = os.environ.get(
         "HERMES_HOME",
-        f"/home/g33ky/.hermes/profiles/{current_profile}",
+        f"/home/{HOME.name}/.hermes/profiles/{profile}",
     )
-    run_dir = Path(os.path.join(base_profile_dir, "cron", "output", "anu", run_id))
+    run_dir = Path(hermes_home) / "cron" / "output" / "anu" / run_id
     run_dir.mkdir(parents=True, exist_ok=False)
 
     if args.detach:
-        print(f"[ANU] Run {run_id} détaché (mode: {MODES[mode]}) — callback Telegram à la fin")
+        print(f"[ANU] Run {run_id} d\u00e9tach\u00e9 (mode: {MODES[mode]}) \u2014 callback Telegram \u00e0 la fin")
         _log_line(f"run_start_detach run_id={run_id} mode={mode}")
         _exec_detached(run_dir, topic, mode)
         return 0
 
-    print(f"[ANU] Démarrage mode {mode} ({MODES[mode]}) — run_id: {run_id}")
+    print(f"[ANU] D\u00e9marrage mode {mode} ({MODES[mode]}) \u2014 run_id: {run_id}")
     _log_line(f"run_start run_id={run_id} mode={mode} topic={topic[:80]!r}")
     try:
         summary = _run_pipeline(run_dir, topic, mode)
@@ -662,14 +636,14 @@ def main() -> int:
         _info("=" * 40)
         _info(f"[ANU] run_id={run_id} | mode={MODES[mode]} | score_p2={p2_mean:.1f}/10 | passes={passes_done}")
     else:
-        print("[ANU] Terminé sans livrable p4.md.")
+        print("[ANU] Termin\u00e9 sans livrable p4.md.")
 
     _log_line(f"run_completed run_id={run_id} mode={mode} score_p2={p2_mean} passes={passes_done}")
     return 0
 
 
 # ---------------------------------------------------------------------------
-# CHILD ENTRY POINT (--parent flag — invoked by systemd-run detach)
+# CHILD ENTRY POINT (--parent — invoked by systemd-run detach)
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -684,12 +658,12 @@ if __name__ == "__main__":
             print(f"Invalid mode: {a.mode}")
             raise SystemExit(2)
 
-        current_profile = os.environ.get("PROFILE", "dev")
-        base_profile_dir = os.environ.get(
+        profile = os.environ.get("PROFILE", "dev")
+        hermes_home = os.environ.get(
             "HERMES_HOME",
-            f"/home/g33ky/.hermes/profiles/{current_profile}",
+            f"/home/{HOME.name}/.hermes/profiles/{profile}",
         )
-        child_run_dir = Path(os.path.join(base_profile_dir, "cron", "output", "anu", a.run_id))
+        child_run_dir = Path(hermes_home) / "cron" / "output" / "anu" / a.run_id
         if not child_run_dir.exists():
             raise SystemExit(f"Missing run_dir: {child_run_dir}")
 
