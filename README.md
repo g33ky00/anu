@@ -212,25 +212,18 @@ anu --status
 
 ## Changelog
 
-### v2.0.1 — Juillet 2026 (patch prod)
+### v1.0.1 — Juillet 2026 *(alignement version + fix log)*
+- **[fix]** Chemin log ANU unifié via `DEFAULT_LOG_DIR` (`_HERMES_HOME / "logs"`)
+- **[maint]** Harmonisation version pipeline/tool.py/README sur `v1.0.1`
+- **[docs]** Retrait de la feature fantôme `--context` hors implémentation
 
-- **[fix]** `response.status` (corrige `resp.status` — NameError, Telegram toujours échoué)
-- **[fix]** `DEFAULT_RUN_ROOT` / `ENGINE_DEFAULT` respectent `HERMES_PROFILE` env var
-- **[fix]** `_resume()` : reprise complète du pipeline depuis le dernier checkpoint (pas seulement la passe suivante)
-- **[fix]** Token Telegram masqué dans tous les appels `_log_line()`
-- **[fix]** `_load_telegram_credentials()` : regex YAML plus robuste, suppression du fallback `openrouter`
-- **[maint]** `.gitignore` : exclusion des `.bak` et des runs Hermes
-- **[docs]** README aligné sur l’implémentation réelle
-
-### v2.0.0 — Juillet 2026
-
+### v1.0.0 — Juillet 2026 *(prod-ready)*
 - Pipeline 4 passes avec mode `--detach` (systemd-run) et callback Telegram
 - 7 archétypes, détection automatique par mots-clés
 - Manifest atomique, logging AUTONOMOUS
 - `--status` et `--resume`
 
-### v1.0.0 — Juin 2026
-
+### v0.1 — Juin 2026 *(prototype)*
 - Pipeline 4 passes initial (`engine.py`)
 - Intégration Hermes via `execute_code`
 
