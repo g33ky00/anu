@@ -4,8 +4,9 @@
 ANU Mind CLI wrapper — Slash `/anu` triggers this binary.
 Orchestration: Python, argparse, calls engine.py via subprocess.
 
-Fixes v2.0.1:
-  - response.status (was resp.status — NameError, Telegram always failed)
+Fixes v1.0.1:
+  - DEFAULT_LOG_DIR / _log_line path normalized to single Hermes logs dir
+  - removed stale --context references from README/tooling docs
   - DEFAULT_RUN_ROOT / ENGINE_DEFAULT honour HERMES_PROFILE env var
   - _resume() now resumes full pipeline from last completed pass
   - _load_telegram_credentials() token never logged in clear
@@ -91,7 +92,7 @@ def _now_iso() -> str:
 
 def _log_line(msg: str) -> None:
     day      = datetime.now().strftime("%Y-%m-%d")
-    log_path = _HERMES_HOME / "profiles" / _PROFILE / "logs" / f"hermes_{day}.log"
+    log_path = DEFAULT_LOG_DIR / f"hermes_{day}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(f"[{_now_iso()}] [AUTONOMOUS] [anu_mind] {msg}\n")
@@ -493,7 +494,7 @@ def _status(run_root: Path) -> None:
 def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
     """
     Reprend le pipeline complet depuis la première passe non complétée.
-    FIX v2.0.1: exécution de toutes les passes manquantes (pas seulement la suivante).
+    FIX v1.0.1: exécution de toutes les passes manquantes (pas seulement la suivante).
     """
     rd = run_root / run_id
     if not rd.exists():

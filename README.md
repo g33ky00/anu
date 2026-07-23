@@ -1,6 +1,6 @@
 # ANU Mind
 
-> Moteur de raisonnement structuré multi-passes pour **Hermes Agent — v1.0.0 Prod-Ready**.
+> Moteur de raisonnement structuré multi-passes pour **Hermes Agent — v1.0.1**.
 > Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes
 > en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
 > Callback automatique via Telegram à l'issue de chaque run détaché.
@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-4caf50)]()
 [![Hermes Skill](https://img.shields.io/badge/Hermes-Skill-purple)]()
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
 [![Status](https://img.shields.io/badge/Status-PROD-brightgreen)]()
 
 ---
@@ -91,8 +91,6 @@ anu/
 anu "<topic>"                     # mode auto-détecté, cold start
 anu "<topic>" --mode N            # archétype forcé (1-7)
 anu "<topic>" --detach            # exécution arrière-plan + callback Telegram
-anu "<topic>" --context           # injecte les 5 derniers messages de la session
-anu "<topic>" --context N         # injecte les N derniers messages de la session
 anu --resume <run_id>             # reprise pipeline depuis dernier checkpoint
 anu --status                      # liste 20 derniers runs
 ```
@@ -110,8 +108,6 @@ anu-tg "<topic>" <chat_id>        # override chat_id destination
 anu "audit SSH hardening" --mode 5
 anu "refactor parser.py" --mode 2
 anu "architecture NAS backup" --mode 1 --detach
-anu "analyse ce contexte" --context
-anu "approfondis ce point" --context 10
 anu --status
 anu --resume 20260719_132400
 anu-tg "explique le protocole BGP"
@@ -175,20 +171,7 @@ Plafond anti-boucle : 3 passes P3 maximum (`MAX_CORRECTION_PASSES = 3`).
 
 ---
 
-## Option `--context` — Injection de contexte session
-
-| Syntaxe | Comportement |
-|---|---|
-| *(absent)* | Cold start — aucun contexte injecté |
-| `--context` | Injecte les 5 derniers messages de la session active |
-| `--context N` | Injecte les N derniers messages de la session active |
-
-Le contexte est préfixé au topic avant injection dans P1.
-Utile pour approfondir ou étendre une réflexion en cours de session Hermes.
-
----
-
-## Mode `--detach` (arrière-plan)
+## Pipeline / Sécurité
 
 - Fork via `systemd-run --user --unit=anu-run-<run_id>`
 - Retour shell < 2 s garanti
@@ -288,7 +271,7 @@ ANU réutilise intégralement la configuration Hermes — aucune clé API ni end
 - Token Telegram **jamais en clair dans les logs** (`_mask_token()` → `abcd****...wxyz`)
 - `scrub_secrets()` appliqué sur toute sortie LLM avant écriture disque
 - Aucun secret dans les checkpoints ou artefacts de run
-- Inputs : `topic`, `--mode`, `--context` uniquement — pas d'`eval()`, `exec()`, ni `subprocess` avec input utilisateur
+- Inputs : `topic`, `--mode` uniquement — pas d'`eval()`, `exec()`, ni `subprocess` avec input utilisateur
 
 ---
 
@@ -302,7 +285,7 @@ ANU réutilise intégralement la configuration Hermes — aucune clé API ni end
 
 ---
 
-## Certification V1.0 — Recette N4 (2026-07-22)
+## Certification V1.0.1 — Recette N4 (2026-07-22)
 
 - Campagne retenue : **35 runs isolés**, 5 profils autorisés, 7 modes couverts.
 - Taux de succès : **94.2 %** en cold start multi-profils.
@@ -313,6 +296,11 @@ ANU réutilise intégralement la configuration Hermes — aucune clé API ni end
 
 ## Changelog
 
+### v1.0.1 — Juillet 2026 *(alignement version + fix log)*
+- **[fix]** Chemin log ANU unifié via `DEFAULT_LOG_DIR` (`_HERMES_HOME / "logs"`)
+- **[maint]** Harmonisation version pipeline/tool.py/README sur `v1.0.1`
+- **[docs]** Retrait de la feature fantôme `--context` hors implémentation
+
 ### v1.0.0 — Juillet 2026 *(prod-ready)*
 
 - **[certification]** Recette N4 validée : 35 runs, 5 profils, 7 modes.
@@ -320,10 +308,9 @@ ANU réutilise intégralement la configuration Hermes — aucune clé API ni end
 - **[maint]** README rebasé sur dépôt distant, métadonnées V1.0.0 ajoutées.
 
 ### v0.9.1 — Juillet 2026
-
+### v0.9.1 — Juillet 2026
 - **[prod]** Pipeline 4 passes fonctionnel et stabilisé en production
 - **[prod]** Callback Telegram opérationnel (`response.status` fix)
-- **[feat]** `--context [N]` : injection de contexte session (défaut 5 messages, cold start si absent)
 - **[feat]** `anu-tg` : wrapper shell Telegram (mode TEACHER, detach, chat_id configurable)
 - **[feat]** `--detach` : fork `systemd-run --user` avec injection complète d'environnement
 - **[feat]** `--resume` : reprise pipeline complet depuis dernier checkpoint valide
