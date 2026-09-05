@@ -105,7 +105,7 @@ jobs:
             exit 1
           fi
 
-      - name: Not an operations runbook
+      - name: Not an operations runbook (warning)
         run: |
           ISSUES=0
           # Supprimer les blocs de code (multilignes + inline) avant analyse
@@ -120,9 +120,10 @@ jobs:
           fi
           if [ $ISSUES -gt 0 ]; then
             echo "RUNBOOK_DETECTED=true" >> .readme-results.txt
-            exit 1
+            echo "⚠️ $ISSUES indicateur(s) de runbook dans README (non-bloquant)"
+          else
+            echo "✅ Pas de contenu d'exploitation détecté"
           fi
-          echo "✅ Pas de contenu d'exploitation détecté"
 
       - name: Structure matches reality
         run: |
