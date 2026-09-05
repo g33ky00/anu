@@ -50,6 +50,8 @@ jobs:
   readme-check:
     name: README Compliance
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.readme_result }}
     steps:
       - uses: actions/checkout@v4
 
@@ -181,6 +183,13 @@ jobs:
             fi
           done
           [ $BROKEN -gt 0 ] && echo "⚠️ $BROKEN lien(s) à vérifier" || echo "✅ Liens OK"
+
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "readme_result=$RESULT" >> $GITHUB_OUTPUT
+          echo "readme_status=$RESULT" >> $GITHUB_STEP_SUMMARY
 
   go-checks:
     name: Go
@@ -348,3 +357,161 @@ jobs:
         run: |
           gem install brakeman 2>/dev/null || true
           brakeman -q -w2 2>&1 || true
+
+  ci-summary:
+    name: CI Summary
+    if: always()
+    needs: [detect, secrets-scan, readme-check, go-checks, node-checks, typescript-checks, python-checks, php-checks, rust-checks, powershell-checks, java-checks, ruby-checks]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║              UCQCS — RAPPORT DE VALIDATION                ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "Dépôt : ${{ github.repository }}"
+          echo "Commit : ${{ github.sha }}"
+          echo "Branche : ${{ github.ref_name }}"
+          echo "Déclencheur : ${{ github.event_name }}"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          check() {
+            local name="$1"
+            local status="$2"
+            local detail="$3"
+            case "$status" in
+              success)  echo "  ✅ $name : PASS" ;;
+              failure)  echo "  ❌ $name : FAIL — $detail" ;;
+              skipped)  echo "  ⏭️  $name : SKIP (non applicable)" ;;
+              cancelled) echo "  🚫 $name : CANCELLED" ;;
+              *)        echo "  ⚠️  $name : $status" ;;
+            esac
+          }
+          
+          # Verdicts
+          RS="${{ needs.secrets-scan.result }}"
+          RC="${{ needs.readme-check.result }}"
+          GC="${{ needs.go-checks.result }}"
+          NC="${{ needs.node-checks.result }}"
+          TC="${{ needs.typescript-checks.result }}"
+          PC="${{ needs.python-checks.result }}"
+          PH="${{ needs.php-checks.result }}"
+          RU="${{ needs.rust-checks.result }}"
+          PS="${{ needs.powershell-checks.result }}"
+          JC="${{ needs.java-checks.result }}"
+          RB="${{ needs.ruby-checks.result }}"
+          
+          FAILED=0
+          
+          check "Secrets Scan" "$RS" "gitleaks a détecté un secret en clair"
+          [ "$RS" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "README Compliance" "$RC" "README non conforme à la charte (sections manquantes, badges absents, ou contenu runbook)"
+          [ "$RC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Go Checks" "$GC" "govulncheck/gosec/test non conforme"
+          [ "$GC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Node.js Checks" "$NC" "npm audit/eslint/test non conforme"
+          [ "$NC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "TypeScript Checks" "$TC" "tsc --noEmit a détecté des erreurs"
+          [ "$TC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Python Checks" "$PC" "pip-audit/bandit/pytest non conforme"
+          [ "$PC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "PHP Checks" "$PH" "php -l a détecté une erreur de syntaxe"
+          [ "$PH" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Rust Checks" "$RU" "cargo audit/clippy/test non conforme"
+          [ "$RU" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "PowerShell Checks" "$PS" "PSScriptAnalyzer a détecté des erreurs"
+          [ "$PS" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Java Checks" "$JC" "mvn/gradle test non conforme"
+          [ "$JC" = "failure" ] && FAILED=$((FAILED+1))
+          
+          check "Ruby Checks" "$RB" "bundler-audit/brakeman non conforme"
+          [ "$RB" = "failure" ] && FAILED=$((FAILED+1))
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          if [ $FAILED -eq 0 ]; then
+            echo "🎉 RÉSULTAT : TOUTES LES VÉRIFICATIONS ONT RÉUSSI"
+            echo ""
+            echo "Aucun problème détecté. Le code est conforme aux standards UCQCS."
+          else
+            echo "🚨 RÉSULTAT : $FAILED VÉRIFICATION(S) EN ÉCHEC"
+            echo ""
+            echo "Les contrôles ci-dessus ont échoué. Consultez les logs détaillés"
+            echo "de chaque job pour identifier les actions correctives nécessaires."
+          fi
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Stack détecté :"
+          echo "  Go:          ${{ needs.detect.outputs.has_go }}"
+          echo "  Node.js:     ${{ needs.detect.outputs.has_node }}"
+          echo "  Python:      ${{ needs.detect.outputs.has_python }}"
+          echo "  PHP:         ${{ needs.detect.outputs.has_php }}"
+          echo "  Rust:        ${{ needs.detect.outputs.has_rust }}"
+          echo "  PowerShell:  ${{ needs.detect.outputs.has_powershell }}"
+          echo "  TypeScript:   ${{ needs.detect.outputs.has_typescript }}"
+          echo "  Java:        ${{ needs.detect.outputs.has_java }}"
+          echo "  Ruby:        ${{ needs.detect.outputs.has_ruby }}"
+          
+          echo ""
+          echo "Généré le : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "UCQCS v4.3 — Unified Code Quality Control System"
+          
+          # Write to GitHub Step Summary
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          
+          ## 📊 UCQCS — Rapport de Validation
+          
+          EOF
+          
+          echo "| Job | Statut | Détail |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          summary_row() {
+            local name="$1"
+            local status="$2"
+            local detail="$3"
+            case "$status" in
+              success)  echo "| $name | ✅ PASS | — |" >> $GITHUB_STEP_SUMMARY ;;
+              failure)  echo "| $name | ❌ FAIL | $detail |" >> $GITHUB_STEP_SUMMARY ;;
+              skipped)  echo "| $name | ⏭️ SKIP | Non applicable |" >> $GITHUB_STEP_SUMMARY ;;
+              *)        echo "| $name | ⚠️ $status | — |" >> $GITHUB_STEP_SUMMARY ;;
+            esac
+          }
+          
+          summary_row "Secrets Scan" "$RS" "Secret en clair"
+          summary_row "README Compliance" "$RC" "Non conforme charte"
+          summary_row "Go Checks" "$GC" "Échec tests/vuln"
+          summary_row "Node.js Checks" "$NC" "Échec audit/lint"
+          summary_row "TypeScript Checks" "$TC" "Échec type check"
+          summary_row "Python Checks" "$PC" "Échec audit/tests"
+          summary_row "PHP Checks" "$PH" "Échec syntaxe"
+          summary_row "Rust Checks" "$RU" "Échec audit/clippy"
+          summary_row "PowerShell Checks" "$PS" "Échec analyze"
+          summary_row "Java Checks" "$JC" "Échec tests"
+          summary_row "Ruby Checks" "$RB" "Échec audit"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $FAILED -eq 0 ]; then
+            echo "**RÉSULTAT : ✅ TOUTES LES VÉRIFICATIONS ONT RÉUSSI**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**RÉSULTAT : ❌ $FAILED VÉRIFICATION(S) EN ÉCHEC**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Consultez les logs détaillés pour identifier les actions correctives." >> $GITHUB_STEP_SUMMARY
+          fi
