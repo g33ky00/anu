@@ -23,6 +23,7 @@ jobs:
       has_typescript: ${{ steps.detect.outputs.has_typescript }}
       has_java: ${{ steps.detect.outputs.has_java }}
       has_ruby: ${{ steps.detect.outputs.has_ruby }}
+      has_shell: ${{ steps.detect.outputs.has_shell }}
     steps:
       - uses: actions/checkout@v4
       - id: detect
@@ -36,6 +37,7 @@ jobs:
           [ -f tsconfig.json ] && echo "has_typescript=true" >> $GITHUB_OUTPUT || echo "has_typescript=false" >> $GITHUB_OUTPUT
           find . -maxdepth 3 -name "pom.xml" -o -name "build.gradle" -o -name "*.java" 2>/dev/null | head -1 | grep -q . && echo "has_java=true" >> $GITHUB_OUTPUT || echo "has_java=false" >> $GITHUB_OUTPUT
           find . -maxdepth 3 -name "Gemfile" -o -name "*.rb" 2>/dev/null | head -1 | grep -q . && echo "has_ruby=true" >> $GITHUB_OUTPUT || echo "has_ruby=false" >> $GITHUB_OUTPUT
+          find . -maxdepth 3 \( -name "*.sh" -o -name "*.bash" \) -not -path "./.git/*" -not -path "./node_modules/*" 2>/dev/null | head -1 | grep -q . && echo "has_shell=true" >> $GITHUB_OUTPUT || echo "has_shell=false" >> $GITHUB_OUTPUT
 
   secrets-scan:
     name: Secrets Scan
@@ -74,6 +76,21 @@ jobs:
         run: |
           go test -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
+      - name: Coverage Threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | awk '/^total:/{gsub("%","",$3); print $3}')
+          echo "Coverage=${COVERAGE}%"
+          if [ "${COVERAGE}" -lt 50 ]; then
+            echo "Coverage below global threshold: 50%"
+            exit 1
+          fi
+      - name: Upload Coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 7
 
   node-checks:
     name: Node.js
@@ -226,3 +243,31 @@ jobs:
         run: |
           gem install brakeman 2>/dev/null || true
           brakeman -q -w2 2>&1 || true
+
+  shell-checks:
+    name: Shell/Bash
+    needs: detect
+    if: needs.detect.outputs.has_shell == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck 2>/dev/null || true
+          find . -maxdepth 3 \( -name "*.sh" -o -name "*.bash" \) -not -path "./.git/*" -not -path "./node_modules/*" | while read -r f; do
+            echo "Checking: $f"
+            shellcheck -S warning "$f" 2>&1 || true
+          done
+      - name: Syntax Check
+        run: |
+          find . -maxdepth 3 \( -name "*.sh" -o -name "*.bash" \) -not -path "./.git/*" -not -path "./node_modules/*" | while read -r f; do
+            echo "Syntax: $f"
+            bash -n "$f" 2>&1 || true
+          done
+      - name: Check Executable Bit
+        run: |
+          find . -maxdepth 3 \( -name "*.sh" -o -name "*.bash" \) -not -path "./.git/*" -not -path "./node_modules/*" | while read -r f; do
+            if [ ! -x "$f" ]; then
+              echo "WARNING: $f is not executable (chmod +x recommended)"
+            fi
+          done
