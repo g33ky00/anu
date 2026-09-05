@@ -425,6 +425,13 @@ jobs:
       - name: Test
         run: |
           set +e
+          # Installer les dépendances du projet si présentes
+          if [ -f requirements.txt ]; then
+            pip3 install -r requirements.txt 2>/dev/null || true
+          fi
+          if [ -f pyproject.toml ]; then
+            pip3 install -e . 2>/dev/null || pip3 install . 2>/dev/null || true
+          fi
           pip3 install pytest 2>/dev/null || true
           OUTPUT=$(python3 -m pytest 2>&1)
           EXIT_CODE=$?
