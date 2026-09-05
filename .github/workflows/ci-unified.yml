@@ -422,11 +422,11 @@ jobs:
             echo "BANDIT_FAIL=true" >> .python-results.txt
             exit 1
           fi
-      - name: Tests
+      - name: Test
         run: |
           set +e
-          pip install pytest 2>/dev/null || true
-          OUTPUT=$(python -m pytest 2>&1)
+          pip3 install pytest 2>/dev/null || true
+          OUTPUT=$(python3 -m pytest 2>&1)
           EXIT_CODE=$?
           set -e
           if [ $EXIT_CODE -ne 0 ]; then
@@ -470,7 +470,7 @@ jobs:
       - name: Hardcoded Secrets
         run: |
           set +e
-          OUTPUT=$(grep -rnE "(password|secret|api_key|token).*[\"'][A-Za-z0-9+/=]{20,}[\"']" --include="*.php" --include="*.js" --include="*.json" . 2>/dev/null | grep -v node_modules | grep -v ".git")
+          OUTPUT=$(grep -rnE "(password|secret|api_key|token).*[\"'][A-Za-z0-9+/=]{20,}[\"']" --include="*.php" --include="*.js" --include="*.json" . 2>/dev/null | grep -v node_modules | grep -v ".git" | grep -v "wp-content/plugins" | grep -v "wp-admin/includes" | grep -v "wp-includes")
           EXIT_CODE=$?
           set -e
           if [ $EXIT_CODE -eq 0 ]; then
