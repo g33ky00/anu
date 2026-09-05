@@ -39,13 +39,40 @@ jobs:
   secrets-scan:
     name: Secrets Scan
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.secrets_result }}
+      details: ${{ steps.summary.outputs.secrets_details }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gitleaks Scan
+        run: |
+          set +e
+          OUTPUT=$(gitleaks detect --source . --verbose --redact 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "$OUTPUT" | head -50 > .secrets-results.txt
+            echo "" >> .secrets-results.txt
+            echo "SECRETS_FOUND=true" >> .secrets-results.txt
+            ISSUES=$(echo "$OUTPUT" | grep -c "Found secret" || echo "0")
+            echo "SECRETS_COUNT=$ISSUES" >> .secrets-results.txt
+            exit 1
+          else
+            echo "✅ Aucun secret détecté"
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "secrets_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .secrets-results.txt ]; then
+            DETAILS=$(cat .secrets-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "secrets_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "secrets_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   readme-check:
     name: README Compliance
@@ -186,13 +213,6 @@ jobs:
           if [ -f .readme-results.txt ]; then
             DETAILS=$(cat .readme-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
             echo "readme_details=$DETAILS" >> $GITHUB_OUTPUT
-            echo "readme_status=$RESULT" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📋 Détail des tests README" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            while IFS= read -r line; do
-              echo "- $line" >> $GITHUB_STEP_SUMMARY
-            done < .readme-results.txt
           else
             echo "readme_details=Aucun problème détecté" >> $GITHUB_OUTPUT
           fi
@@ -202,53 +222,148 @@ jobs:
     needs: detect
     if: needs.detect.outputs.has_go == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.go_result }}
+      details: ${{ steps.summary.outputs.go_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: stable
       - name: Vet
-        run: go vet ./...
+        run: |
+          set +e
+          OUTPUT=$(go vet ./... 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ go vet: $OUTPUT" >> .go-results.txt
+            echo "VET_FAIL=true" >> .go-results.txt
+            exit 1
+          fi
       - name: Vuln Check
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          $(go env GOPATH)/bin/govulncheck ./...
+          set +e
+          go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null
+          OUTPUT=$($(go env GOPATH)/bin/govulncheck ./... 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ govulncheck: $OUTPUT" >> .go-results.txt
+            echo "VULN_FAIL=true" >> .go-results.txt
+            exit 1
+          fi
       - name: Security
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          $(go env GOPATH)/bin/gosec ./...
+          set +e
+          go install github.com/securego/gosec/v2/cmd/gosec@latest 2>/dev/null
+          OUTPUT=$($(go env GOPATH)/bin/gosec ./... 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ gosec: $OUTPUT" >> .go-results.txt
+            echo "SEC_FAIL=true" >> .go-results.txt
+            exit 1
+          fi
       - name: Tests
-        run: go test -v ./...
+        run: |
+          set +e
+          OUTPUT=$(go test -v ./... 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ go test: $OUTPUT" >> .go-results.txt
+            echo "TEST_FAIL=true" >> .go-results.txt
+            exit 1
+          fi
       - name: Coverage
         run: |
-          go test -coverprofile=coverage.out ./...
-          go tool cover -func=coverage.out
+          set +e
+          OUTPUT=$(go test -coverprofile=coverage.out ./... 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            go tool cover -func=coverage.out 2>&1 | tee -a .go-results.txt
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "go_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .go-results.txt ]; then
+            DETAILS=$(cat .go-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "go_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "go_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   node-checks:
     name: Node.js
     needs: detect
     if: needs.detect.outputs.has_node == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.node_result }}
+      details: ${{ steps.summary.outputs.node_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
       - name: NPM Audit
-        run: npm audit --audit-level=high 2>&1 || true
+        run: |
+          set +e
+          OUTPUT=$(npm audit --audit-level=high 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ npm audit: $OUTPUT" >> .node-results.txt
+            echo "AUDIT_FAIL=true" >> .node-results.txt
+            exit 1
+          fi
       - name: ESLint
         run: |
+          set +e
           npm install -g eslint 2>/dev/null || true
-          npx eslint . --max-warnings=0 --ignore-pattern 'node_modules/' --ignore-pattern 'dist/' --ignore-pattern 'build/' 2>&1 || true
+          OUTPUT=$(npx eslint . --max-warnings=0 --ignore-pattern 'node_modules/' --ignore-pattern 'dist/' --ignore-pattern 'build/' 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ eslint: $OUTPUT" >> .node-results.txt
+            echo "LINT_FAIL=true" >> .node-results.txt
+            exit 1
+          fi
       - name: Tests
         run: |
-          [ -f package.json ] && npm test 2>&1 || echo "No tests configured"
+          set +e
+          OUTPUT=$(npm test 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ npm test: $OUTPUT" >> .node-results.txt
+            echo "TEST_FAIL=true" >> .node-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "node_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .node-results.txt ]; then
+            DETAILS=$(cat .node-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "node_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "node_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   typescript-checks:
     name: TypeScript
     needs: detect
     if: needs.detect.outputs.has_typescript == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.ts_result }}
+      details: ${{ steps.summary.outputs.ts_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -256,14 +371,36 @@ jobs:
           node-version: lts/*
       - name: Type Check
         run: |
+          set +e
           npm install -g typescript 2>/dev/null || true
-          npx tsc --noEmit 2>&1 || true
+          OUTPUT=$(npx tsc --noEmit 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ tsc: $OUTPUT" >> .ts-results.txt
+            echo "TSC_FAIL=true" >> .ts-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "ts_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .ts-results.txt ]; then
+            DETAILS=$(cat .ts-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "ts_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "ts_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   python-checks:
     name: Python
     needs: detect
     if: needs.detect.outputs.has_python == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.python_result }}
+      details: ${{ steps.summary.outputs.python_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -271,67 +408,196 @@ jobs:
           python-version: '3.x'
       - name: Pip Audit
         run: |
+          set +e
           pip install pip-audit 2>/dev/null || true
-          pip-audit --strict 2>&1 || true
+          OUTPUT=$(pip-audit --strict 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ pip-audit: $OUTPUT" >> .python-results.txt
+            echo "AUDIT_FAIL=true" >> .python-results.txt
+            exit 1
+          fi
       - name: Bandit
         run: |
+          set +e
           pip install bandit 2>/dev/null || true
-          bandit -r . -ll -x ./tests,./test,./venv,.venv 2>&1 || true
+          OUTPUT=$(bandit -r . -ll -x ./tests,./test,./venv,.venv 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ bandit: $OUTPUT" >> .python-results.txt
+            echo "BANDIT_FAIL=true" >> .python-results.txt
+            exit 1
+          fi
       - name: Tests
         run: |
+          set +e
           pip install pytest 2>/dev/null || true
-          python -m pytest 2>&1 || echo "No tests configured"
+          OUTPUT=$(python -m pytest 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ pytest: $OUTPUT" >> .python-results.txt
+            echo "TEST_FAIL=true" >> .python-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "python_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .python-results.txt ]; then
+            DETAILS=$(cat .python-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "python_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "python_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   php-checks:
     name: PHP
     needs: detect
     if: needs.detect.outputs.has_php == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.php_result }}
+      details: ${{ steps.summary.outputs.php_details }}
     steps:
       - uses: actions/checkout@v4
       - name: Syntax
-        run: find . -name "*.php" -not -path "./vendor/*" -not -path "./node_modules/*" -not -path "./wp-admin/*" -not -path "./wp-includes/*" -not -path "./wp-content/*" -exec php -l {} \; 2>&1 || true
+        run: |
+          set +e
+          OUTPUT=$(find . -name "*.php" -not -path "./vendor/*" -not -path "./node_modules/*" -not -path "./wp-admin/*" -not -path "./wp-includes/*" -not -path "./wp-content/*" -exec php -l {} \; 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ php -l: $OUTPUT" >> .php-results.txt
+            echo "SYNTAX_FAIL=true" >> .php-results.txt
+            exit 1
+          fi
       - name: Hardcoded Secrets
         run: |
-          grep -rnE "(password|secret|api_key|token).*[\"'][A-Za-z0-9+/=]{20,}[\"']" \
-            --include="*.php" --include="*.js" --include="*.json" \
-            . 2>/dev/null | grep -v node_modules | grep -v ".git" || echo "No hardcoded secrets detected"
+          set +e
+          OUTPUT=$(grep -rnE "(password|secret|api_key|token).*[\"'][A-Za-z0-9+/=]{20,}[\"']" --include="*.php" --include="*.js" --include="*.json" . 2>/dev/null | grep -v node_modules | grep -v ".git")
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "❌ hardcoded secrets: $OUTPUT" >> .php-results.txt
+            echo "SECRETS_FAIL=true" >> .php-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "php_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .php-results.txt ]; then
+            DETAILS=$(cat .php-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "php_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "php_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   rust-checks:
     name: Rust
     needs: detect
     if: needs.detect.outputs.has_rust == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.rust_result }}
+      details: ${{ steps.summary.outputs.rust_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Audit
         run: |
+          set +e
           cargo install cargo-audit 2>/dev/null || true
-          cargo audit 2>&1 || true
+          OUTPUT=$(cargo audit 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ cargo audit: $OUTPUT" >> .rust-results.txt
+            echo "AUDIT_FAIL=true" >> .rust-results.txt
+            exit 1
+          fi
       - name: Clippy
-        run: cargo clippy -- -D warnings 2>&1 || true
+        run: |
+          set +e
+          OUTPUT=$(cargo clippy -- -D warnings 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ clippy: $OUTPUT" >> .rust-results.txt
+            echo "CLIPPY_FAIL=true" >> .rust-results.txt
+            exit 1
+          fi
       - name: Tests
-        run: cargo test 2>&1 || true
+        run: |
+          set +e
+          OUTPUT=$(cargo test 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ cargo test: $OUTPUT" >> .rust-results.txt
+            echo "TEST_FAIL=true" >> .rust-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "rust_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .rust-results.txt ]; then
+            DETAILS=$(cat .rust-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "rust_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "rust_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   powershell-checks:
     name: PowerShell
     needs: detect
     if: needs.detect.outputs.has_powershell == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.ps_result }}
+      details: ${{ steps.summary.outputs.ps_details }}
     steps:
       - uses: actions/checkout@v4
       - name: PSScriptAnalyzer
         run: |
+          set +e
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser 2>/dev/null || true
-          Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning 2>&1 || true
+          OUTPUT=$(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ PSScriptAnalyzer: $OUTPUT" >> .ps-results.txt
+            echo "ANALYZE_FAIL=true" >> .ps-results.txt
+            exit 1
+          fi
         shell: pwsh
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "ps_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .ps-results.txt ]; then
+            DETAILS=$(cat .ps-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "ps_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "ps_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   java-checks:
     name: Java
     needs: detect
     if: needs.detect.outputs.has_java == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.java_result }}
+      details: ${{ steps.summary.outputs.java_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -340,16 +606,50 @@ jobs:
           java-version: lts
       - name: Tests (Maven)
         run: |
-          [ -f pom.xml ] && mvn test -B 2>&1 || echo "No Maven project"
+          if [ -f pom.xml ]; then
+            set +e
+            OUTPUT=$(mvn test -B 2>&1)
+            EXIT_CODE=$?
+            set -e
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "❌ mvn test: $OUTPUT" >> .java-results.txt
+              echo "MAVEN_FAIL=true" >> .java-results.txt
+              exit 1
+            fi
+          fi
       - name: Tests (Gradle)
         run: |
-          [ -f build.gradle ] && ./gradlew test 2>&1 || echo "No Gradle project"
+          if [ -f build.gradle ]; then
+            set +e
+            OUTPUT=$(./gradlew test 2>&1)
+            EXIT_CODE=$?
+            set -e
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "❌ gradle test: $OUTPUT" >> .java-results.txt
+              echo "GRADLE_FAIL=true" >> .java-results.txt
+              exit 1
+            fi
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "java_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .java-results.txt ]; then
+            DETAILS=$(cat .java-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "java_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "java_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   ruby-checks:
     name: Ruby
     needs: detect
     if: needs.detect.outputs.has_ruby == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.summary.outputs.ruby_result }}
+      details: ${{ steps.summary.outputs.ruby_details }}
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -357,12 +657,39 @@ jobs:
           ruby-version: ruby
       - name: Audit
         run: |
+          set +e
           gem install bundler-audit 2>/dev/null || true
-          bundle audit 2>&1 || true
+          OUTPUT=$(bundle audit 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ bundle audit: $OUTPUT" >> .ruby-results.txt
+            echo "AUDIT_FAIL=true" >> .ruby-results.txt
+            exit 1
+          fi
       - name: Brakeman
         run: |
+          set +e
           gem install brakeman 2>/dev/null || true
-          brakeman -q -w2 2>&1 || true
+          OUTPUT=$(brakeman -q -w2 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "❌ brakeman: $OUTPUT" >> .ruby-results.txt
+            echo "BRAKEMAN_FAIL=true" >> .ruby-results.txt
+            exit 1
+          fi
+      - id: summary
+        if: always()
+        run: |
+          RESULT="${{ job.status }}"
+          echo "ruby_result=$RESULT" >> $GITHUB_OUTPUT
+          if [ -f .ruby-results.txt ]; then
+            DETAILS=$(cat .ruby-results.txt | tr '\n' ' ' | sed 's/"/\\"/g' | cut -c1-500)
+            echo "ruby_details=$DETAILS" >> $GITHUB_OUTPUT
+          else
+            echo "ruby_details=Aucun problème détecté" >> $GITHUB_OUTPUT
+          fi
 
   ci-summary:
     name: CI Summary
@@ -399,51 +726,61 @@ jobs:
           
           # Verdicts
           RS="${{ needs.secrets-scan.result }}"
+          RD="${{ needs.secrets-scan.outputs.details }}"
           RC="${{ needs.readme-check.result }}"
-          RD="${{ needs.readme-check.outputs.details }}"
+          RCD="${{ needs.readme-check.outputs.details }}"
           GC="${{ needs.go-checks.result }}"
+          GD="${{ needs.go-checks.outputs.details }}"
           NC="${{ needs.node-checks.result }}"
+          ND="${{ needs.node-checks.outputs.details }}"
           TC="${{ needs.typescript-checks.result }}"
+          TD="${{ needs.typescript-checks.outputs.details }}"
           PC="${{ needs.python-checks.result }}"
+          PD="${{ needs.python-checks.outputs.details }}"
           PH="${{ needs.php-checks.result }}"
+          PHD="${{ needs.php-checks.outputs.details }}"
           RU="${{ needs.rust-checks.result }}"
+          RUD="${{ needs.rust-checks.outputs.details }}"
           PS="${{ needs.powershell-checks.result }}"
+          PSD="${{ needs.powershell-checks.outputs.details }}"
           JC="${{ needs.java-checks.result }}"
+          JCD="${{ needs.java-checks.outputs.details }}"
           RB="${{ needs.ruby-checks.result }}"
+          RBD="${{ needs.ruby-checks.outputs.details }}"
           
           FAILED=0
           
-          check "Secrets Scan" "$RS" "gitleaks a détecté un secret en clair"
+          check "Secrets Scan" "$RS" "$RD"
           [ "$RS" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "README Compliance" "$RC" "$RD"
+          check "README Compliance" "$RC" "$RCD"
           [ "$RC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Go Checks" "$GC" "govulncheck/gosec/test non conforme"
+          check "Go Checks" "$GC" "$GD"
           [ "$GC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Node.js Checks" "$NC" "npm audit/eslint/test non conforme"
+          check "Node.js Checks" "$NC" "$ND"
           [ "$NC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "TypeScript Checks" "$TC" "tsc --noEmit a détecté des erreurs"
+          check "TypeScript Checks" "$TC" "$TD"
           [ "$TC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Python Checks" "$PC" "pip-audit/bandit/pytest non conforme"
+          check "Python Checks" "$PC" "$PD"
           [ "$PC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "PHP Checks" "$PH" "php -l a détecté une erreur de syntaxe"
+          check "PHP Checks" "$PH" "$PHD"
           [ "$PH" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Rust Checks" "$RU" "cargo audit/clippy/test non conforme"
+          check "Rust Checks" "$RU" "$RUD"
           [ "$RU" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "PowerShell Checks" "$PS" "PSScriptAnalyzer a détecté des erreurs"
+          check "PowerShell Checks" "$PS" "$PSD"
           [ "$PS" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Java Checks" "$JC" "mvn/gradle test non conforme"
+          check "Java Checks" "$JC" "$JCD"
           [ "$JC" = "failure" ] && FAILED=$((FAILED+1))
           
-          check "Ruby Checks" "$RB" "bundler-audit/brakeman non conforme"
+          check "Ruby Checks" "$RB" "$RBD"
           [ "$RB" = "failure" ] && FAILED=$((FAILED+1))
           
           echo ""
@@ -477,7 +814,7 @@ jobs:
           
           echo ""
           echo "Généré le : $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "UCQCS v4.3 — Unified Code Quality Control System"
+          echo "UCQCS v4.5 — Unified Code Quality Control System"
           
           # Write to GitHub Step Summary
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
@@ -501,17 +838,17 @@ jobs:
             esac
           }
           
-          summary_row "Secrets Scan" "$RS" "Secret en clair"
-          summary_row "README Compliance" "$RC" "$RD"
-          summary_row "Go Checks" "$GC" "Échec tests/vuln"
-          summary_row "Node.js Checks" "$NC" "Échec audit/lint"
-          summary_row "TypeScript Checks" "$TC" "Échec type check"
-          summary_row "Python Checks" "$PC" "Échec audit/tests"
-          summary_row "PHP Checks" "$PH" "Échec syntaxe"
-          summary_row "Rust Checks" "$RU" "Échec audit/clippy"
-          summary_row "PowerShell Checks" "$PS" "Échec analyze"
-          summary_row "Java Checks" "$JC" "Échec tests"
-          summary_row "Ruby Checks" "$RB" "Échec audit"
+          summary_row "Secrets Scan" "$RS" "$RD"
+          summary_row "README Compliance" "$RC" "$RCD"
+          summary_row "Go Checks" "$GC" "$GD"
+          summary_row "Node.js Checks" "$NC" "$ND"
+          summary_row "TypeScript Checks" "$TC" "$TD"
+          summary_row "Python Checks" "$PC" "$PD"
+          summary_row "PHP Checks" "$PH" "$PHD"
+          summary_row "Rust Checks" "$RU" "$RUD"
+          summary_row "PowerShell Checks" "$PS" "$PSD"
+          summary_row "Java Checks" "$JC" "$JCD"
+          summary_row "Ruby Checks" "$RB" "$RBD"
           
           echo "" >> $GITHUB_STEP_SUMMARY
           
