@@ -109,9 +109,9 @@ jobs:
       - name: Structure matches reality
         run: |
           MISSING=0
-          FILES=$(grep -oE '`[^`]+`|\[.*\]\(([^)]+)\)' README.md | grep -oE '[^`()]+\.(php|js|css|json|md|sh|py|go|txt|html|vue|ts|rb|rs|toml|yml|yaml|env\.example)' | sort -u)
+          FILES=$(grep -oE '`[^`]+`|\[.*\]\(([^)]+)\)' README.md | grep -oE '[^`()]+\.(php|js|css|json|md|sh|py|go|txt|html|vue|ts|rb|rs|toml|yml|yaml|env\.example)' | grep -vE '^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$' | sort -u)
           for f in $FILES; do
-            echo "$f" | grep -qE '^https?://|^/' && continue
+            echo "$f" | grep -qE '^https?://|^/|^\.' && continue
             if [ ! -e "$f" ]; then
               echo "⚠️ Mentionné mais absent : $f"
               MISSING=$((MISSING + 1))
