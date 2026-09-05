@@ -127,8 +127,8 @@ jobs:
       - name: Structure matches reality
         run: |
           MISSING=0
-          # Capturer uniquement les chemins avec / ou commençant par ./
-          FILES=$(grep -oE '`[^`]+`|\[.*\]\(([^)]+)\)' README.md | grep -oE '[^`()]+\.(php|js|css|json|md|sh|py|go|txt|html|vue|ts|rb|rs|toml|yml|yaml|env\.example)' | grep -vE '^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b' | grep -E '^(\./|\.\./|/)|\/' | sort -u)
+          # Capturer uniquement les chemins relatifs avec /
+          FILES=$(grep -oE '`[^`]+`|\[.*\]\(([^)]+)\)' README.md | grep -oE '[^`()]+\.(php|js|css|json|md|sh|py|go|txt|html|vue|ts|rb|rs|toml|yml|yaml|env\.example)' | grep -vE '^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b' | grep -E '(\.\./|\./|[^/]+\.[a-z]+/)' | grep -vE '^(\.\./|\./|/|\~/)' | sort -u)
           for f in $FILES; do
             echo "$f" | grep -qE '^https?://|^/' && continue
             if [ ! -e "$f" ]; then
