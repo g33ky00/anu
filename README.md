@@ -306,6 +306,41 @@ anu "$1" --mode 3 --detach                          # mode TEACHER, arrière-pla
 Architecture : **Claude (Anthropic)** via MCP GitHub.
 Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
 
+---
+
+## 📖 À propos
+
+ANU Mind est un moteur de raisonnement structuré multi-passes pour **Hermes Agent**. Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation. Callback automatique via Telegram à l'issue de chaque run détaché.
+
+---
+
+## 🛠 Stack
+
+| Composant | Version | Source |
+|-----------|---------|--------|
+| Python | 3.11+ | système |
+| Hermes | latest | `/home/g33ky/.hermes` |
+| Stdlib only | — | pas de dépendances externes |
+
+---
+
+## 🤝 Contribution
+
+### Conventions de commit
+
+| Préfixe | Usage |
+|---------|-------|
+| `feat:` | Nouvelle fonctionnalité |
+| `fix:`  | Correction |
+| `docs:` | Documentation |
+| `chore:`| Maintenance |
+
+---
+
+## 📄 Licence
+
+Usage interne — Tous droits réservés.
+
 <div align="center">
   <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
 </div>
