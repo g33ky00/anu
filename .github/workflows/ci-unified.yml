@@ -108,12 +108,13 @@ jobs:
       - name: Not an operations runbook
         run: |
           ISSUES=0
-          # Exclure les chemins dans les blocs de code (backticks ou ```bash)
-          if grep -vE 'https?://|github\.com|shields\.io|badge|codecov' README.md | grep -vE '^\s*```|`[^`]+`' | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
+          # Supprimer les blocs de code (multilignes + inline) avant analyse
+          NO_CODE=$(sed '/^```/,/^```/d; s/`[^`]*`//g' README.md)
+          if echo "$NO_CODE" | grep -vE 'https?://|github\.com|shields\.io|badge|codecov' | grep -qE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'; then
             echo "⚠️ Adresse IP détectée → déplacer vers DEPLOYMENT.md" >> .readme-results.txt
             ISSUES=$((ISSUES + 1))
           fi
-          if grep -vE '^\s*```|`[^`]+`' README.md | grep -qE '(/etc/|/var/www/|/home/|/opt/|/usr/local/|/srv/)[^ ]+'; then
+          if echo "$NO_CODE" | grep -qE '(/etc/|/var/www/|/home/|/opt/|/usr/local/|/srv/)[^ ]+'; then
             echo "⚠️ Chemin serveur détecté → déplacer vers DEPLOYMENT.md" >> .readme-results.txt
             ISSUES=$((ISSUES + 1))
           fi
