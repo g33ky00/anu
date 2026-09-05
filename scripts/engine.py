@@ -23,7 +23,10 @@ from typing import Any, Dict, Optional
 # ---------------------------------------------------------------------------
 # CHEMINS / NOMENCLATURE
 # ---------------------------------------------------------------------------
-RUN_ROOT = Path.home() / ".hermes" / "profiles" / "dev" / "cron" / "output" / "anu"
+_profil = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE")
+if not _profil:
+    raise SystemExit("[CRITICAL] ANU engine: HERMES_PROFILE/PROFILE requis, aucun fallback autorisé.")
+RUN_ROOT = Path.home() / ".hermes" / "profiles" / _profil / "cron" / "output" / "anu"
 TIME_FMT = "%Y%m%d_%H%M%S"
 
 # ---------------------------------------------------------------------------
@@ -89,7 +92,10 @@ def utc_now_ts() -> str:
 
 
 def log_autonomous(run_id: str, pass_id: str, mode: int, topic: str, status: str, tokens: int = 0):
-    log_file = Path.home() / ".hermes" / "profiles" / "dev" / "logs" / f"hermes_{datetime.now().strftime('%Y-%m-%d')}.log"
+    _log_profil = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE")
+    if not _log_profil:
+        raise SystemExit("[CRITICAL] ANU engine: HERMES_PROFILE/PROFILE requis pour les logs, aucun fallback autorisé.")
+    log_file = Path.home() / ".hermes" / "profiles" / _log_profil / "logs" / f"hermes_{datetime.now().strftime('%Y-%m-%d')}.log"
     entry = (
         f"[{utc_now_iso()}] [AUTONOMOUS] [anu_mind] [{pass_id.upper()}] "
         f"run_id={run_id} mode={mode} topic_hash={prompt_hash(topic)} status={status} tokens={tokens}\n"
@@ -220,6 +226,113 @@ def _http_json(url: str, payload: Dict[str, Any], headers: Dict[str, str], timeo
         except Exception:
             text = str(e)
         return {"__http_error__": True, "status": e.code, "reason": str(e), "body": text}
+
+
+# ---------------------------------------------------------------------------
+# ROUTAGE OPTION 1 — Retour Telegram (post-p4 uniquement)
+# ---------------------------------------------------------------------------
+def _telegram_is_allowed_chat(profile: str, chat_id: str) -> bool:
+    cfg_path = Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
+    try:
+        text = cfg_path.read_text(encoding="utf-8") if cfg_path.exists() else ""
+    except Exception:
+        return False
+    in_tg = False
+    allowed: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "telegram:":
+            in_tg = True
+            continue
+        if in_tg and line and not line.startswith(" ") and not line.startswith("-"):
+            in_tg = False
+            continue
+        if not in_tg:
+            continue
+        if line.startswith("- "):
+            allowed.append(line[2:].strip().strip('"').strip("'"))
+    if not allowed:
+        return False
+    if str(chat_id) in allowed:
+        return True
+    chat = str(chat_id).removeprefix("-100")
+    if chat and f"-100{chat}" in allowed:
+        return True
+    if chat and chat in allowed:
+        return True
+    return False
+
+
+def _telegram_home_channel(profile: str) -> Optional[str]:
+    cfg_path = Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
+    try:
+        text = cfg_path.read_text(encoding="utf-8") if cfg_path.exists() else ""
+    except Exception:
+        return None
+    m = re.search(r"(?m)^\s*home_channel:\s*(.+?)\s*$", text)
+    if not m:
+        return None
+    val = m.group(1).strip().strip('"').strip("'")
+    return val or None
+
+
+def _telegram_bot_token() -> Optional[str]:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if token:
+        return token
+    auth_path = Path.home() / ".hermes" / "auth.json"
+    try:
+        obj = json.loads(auth_path.read_text(encoding="utf-8")) if auth_path.exists() else {}
+    except Exception:
+        return None
+    telegram = (obj.get("telegram") or {})
+    token = telegram.get("bot_token")
+    return token or None
+
+
+def _maybe_send_telegram_output(run_dir: Path, origin: str, result: Dict[str, Any]) -> None:
+    if not origin or not origin.startswith("telegram:"):
+        return
+    profile = os.environ.get("HERMES_PROFILE") or os.environ.get("PROFILE") or ""
+    if not profile:
+        return
+    target = origin[len("telegram:"):]
+    if ":" in target:
+        chat_id, _, thread_id = target.partition(":")
+    else:
+        chat_id, thread_id = target, ""
+    chat_id = str(chat_id).strip()
+    thread_id = str(thread_id).strip()
+    if not chat_id:
+        return
+    if not _telegram_is_allowed_chat(profile, chat_id):
+        if thread_id:
+            candidate = f"{chat_id}:{thread_id}"
+        else:
+            candidate = chat_id
+        candidate = str(candidate).strip()
+        if not candidate or not _telegram_is_allowed_chat(profile, candidate):
+            return
+        chat_id = candidate
+        thread_id = ""
+    out_md = run_dir / "p4.md"
+    text = out_md.read_text(encoding="utf-8") if out_md.exists() else ""
+    text = text or json.dumps(result, ensure_ascii=False, indent=2)
+    text = text[:4096]
+    token = _telegram_bot_token()
+    if not token:
+        return
+    base = f"https://api.telegram.org/bot{token}"
+    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+    if thread_id:
+        payload["message_thread_id"] = thread_id
+    try:
+        _http_json(f"{base}/sendMessage", payload, {"Content-Type": "application/json"})
+    except Exception:
+        try:
+            log_autonomous(run_dir.name, "P4", 0, "", "telegram_send_error", 0)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +624,8 @@ def run_passes(run_dir: Path, args: argparse.Namespace) -> Dict[str, Any]:
     manifest_path = run_dir / ".manifest.json"
     result["status"] = result.get("status") or "completed"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.pass_id == "p4":
+        _maybe_send_telegram_output(run_dir, args.origin, result)
     return result
 
 
@@ -524,6 +639,7 @@ def main():
     parser.add_argument("--pass", dest="pass_id", required=True, choices=["p1", "p2", "p3", "p4"])
     parser.add_argument("--run-id", required=True, help="Répertoire de run existant YYYYMMDD_HHMMSS")
     parser.add_argument("--input", default=None, help="Chemin markdown d'entrée (p2/p3/p4)")
+    parser.add_argument("--origin", default="", help="Origine de l'appel. Supporté: telegram:<chat_id>[:<thread_id>]")
     args = parser.parse_args()
 
     run_dir = RUN_ROOT / args.run_id
