@@ -47,21 +47,9 @@ jobs:
         with:
           fetch-depth: 0
       - name: Gitleaks Scan
-        run: |
-          set +e
-          OUTPUT=$(gitleaks detect --source . --verbose --redact 2>&1)
-          EXIT_CODE=$?
-          set -e
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "$OUTPUT" | head -50 > .secrets-results.txt
-            echo "" >> .secrets-results.txt
-            echo "SECRETS_FOUND=true" >> .secrets-results.txt
-            ISSUES=$(echo "$OUTPUT" | grep -c "Found secret" || echo "0")
-            echo "SECRETS_COUNT=$ISSUES" >> .secrets-results.txt
-            exit 1
-          else
-            echo "✅ Aucun secret détecté"
-          fi
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - id: summary
         if: always()
         run: |
