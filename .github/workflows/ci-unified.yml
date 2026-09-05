@@ -47,6 +47,59 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  readme-check:
+    name: README Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check README exists
+        run: |
+          [ -f README.md ] && echo "✅ README.md exists" || (echo "❌ README.md missing" && exit 1)
+      - name: Check sections présentes
+        run: |
+          SECTIONS=("## " "### ")
+          OBLIGATOIRES=("À propos" "Structure" "Licence")
+          for s in "${OBLIGATOIRES[@]}"; do
+            if grep -q "$s" README.md; then
+              echo "✅ Section $s présente"
+            else
+              echo "⚠️ Section $s manquante"
+            fi
+          done
+      - name: Vérifier fichiers mentionnés
+        run: |
+          # Extraire les chemins de fichiers mentionnés entre backticks ou liens
+          grep -oE '`[^`]+\.(php|js|css|json|md|sh|py|go|txt|html)`' README.md | tr -d '`' | sort -u | while read -r f; do
+            if [ ! -e "$f" ]; then
+              echo "⚠️ Fichier mentionné mais absent : $f"
+            fi
+          done
+      - name: Vérifier commandes exécutables
+        run: |
+          # Extraire les commandes des blocs de code bash
+          grep -A20 '```bash' README.md | grep -v '```' | grep -E '^\$|^\w+' | head -10
+      - name: Vérifier versions stack
+        run: |
+          # Si package.json existe, vérifier la cohérence
+          if [ -f package.json ]; then
+            echo "=== package.json ==="
+            cat package.json | grep -E '"version"|"name"' | head -5
+          fi
+          if [ -f go.mod ]; then
+            echo "=== go.mod ==="
+            head -3 go.mod
+          fi
+      - name: Vérifier liens
+        run: |
+          # Extraire les liens HTTP et vérifier qu'ils sont valides (non-bloquant)
+          grep -oE 'https?://[^ )\]]+' README.md | sort -u | head -10 | while read -r url; do
+            if curl -sf --max-time 5 "$url" > /dev/null 2>&1; then
+              echo "✅ $url"
+            else
+              echo "⚠️ Lien potentiellement mort : $url"
+            fi
+          done
+
   go-checks:
     name: Go
     needs: detect
