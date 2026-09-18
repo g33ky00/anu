@@ -642,12 +642,28 @@ def main():
     parser.add_argument("--origin", default="", help="Origine de l'appel. Supporté: telegram:<chat_id>[:<thread_id>]")
     args = parser.parse_args()
 
+    # Validate run_id: reject path traversal sequences
+    if ".." in args.run_id or "/" in args.run_id or "\\" in args.run_id:
+        raise SystemExit(f"Invalid run_id: path traversal sequence rejected")
+    
     run_dir = RUN_ROOT / args.run_id
     if not run_dir.exists():
         raise SystemExit(f"Run introuvable: {run_dir}")
 
     if args.input:
         args.input = Path(args.input).resolve()
+        # Validate input path: reject traversal and restrict to allowed dirs
+        allowed_inputs = [RUN_ROOT.resolve(), Path("/tmp").resolve(), Path.home().resolve()]
+        is_allowed = False
+        for base in allowed_inputs:
+            try:
+                args.input.relative_to(base)
+                is_allowed = True
+                break
+            except ValueError:
+                continue
+        if not is_allowed:
+            raise SystemExit(f"Input path rejected: {args.input} is not within allowed directories")
         if not args.input.exists():
             raise SystemExit(f"Input introuvable: {args.input}")
     else:

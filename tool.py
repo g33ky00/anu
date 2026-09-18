@@ -471,7 +471,12 @@ def _status(run_root: Path) -> None:
 
 
 def _resume(run_root: Path, run_id: str, topic_hint: str | None = None) -> None:
-    """Reprend le pipeline complet depuis la premi\u00e8re passe non compl\u00e9t\u00e9e."""
+    """Reprend le pipeline complet depuis la première passe non complétée."""
+    # Validate run_id: reject path traversal sequences
+    if ".." in run_id or "/" in run_id or "\\" in run_id:
+        print(f"Invalid run_id: path traversal sequence rejected")
+        raise SystemExit(1)
+    
     rd = run_root / run_id
     if not rd.exists():
         print(f"Run not found: {run_id}")
