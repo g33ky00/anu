@@ -1,5 +1,10 @@
 # ANU Mind
 
+
+## About
+
+Project description.
+
 > Moteur de raisonnement structuré multi-passes pour **Hermes Agent**.
 > Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes
 > en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation.
@@ -344,3 +349,7 @@ Usage interne — Tous droits réservés.
 <div align="center">
   <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
 </div>
+
+## License
+
+MIT License.
