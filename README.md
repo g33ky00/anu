@@ -313,13 +313,13 @@ Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
 
 ---
 
-## 📖 About
+## About
 
 ANU Mind is a structured multi-pass reasoning engine for **Hermes Agent**. Triggered via the `anu` command, it improves answer quality on complex topics by applying a 4-pass pipeline: generation → audit → conditional correction → validation. Automatic Telegram callback at the end of each detached run.
 
 ---
 
-## 🛠 Stack
+## Stack
 
 | Component | Version | Source |
 |-----------|---------|--------|
@@ -329,7 +329,7 @@ ANU Mind is a structured multi-pass reasoning engine for **Hermes Agent**. Trigg
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 ### Commit conventions
 
@@ -342,7 +342,7 @@ ANU Mind is a structured multi-pass reasoning engine for **Hermes Agent**. Trigg
 
 ---
 
-## 📄 License
+## License
 
 Internal use — All rights reserved.
 
@@ -350,6 +350,7 @@ Internal use — All rights reserved.
   <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
 </div>
 
-## License
 
-MIT License.
+## Structure
+
+TODO
