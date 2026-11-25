@@ -313,38 +313,38 @@ Implémentation : **Hermes** (Stepfun 3.7 flash, profil dev) depuis pytheas.
 
 ---
 
-## 📖 À propos
+## 📖 About
 
-ANU Mind est un moteur de raisonnement structuré multi-passes pour **Hermes Agent**. Déclenché via la commande `anu`, il améliore la qualité des réponses sur des sujets complexes en appliquant un pipeline 4 passes : génération → audit → correction (conditionnelle) → validation. Callback automatique via Telegram à l'issue de chaque run détaché.
+ANU Mind is a structured multi-pass reasoning engine for **Hermes Agent**. Triggered via the `anu` command, it improves answer quality on complex topics by applying a 4-pass pipeline: generation → audit → conditional correction → validation. Automatic Telegram callback at the end of each detached run.
 
 ---
 
 ## 🛠 Stack
 
-| Composant | Version | Source |
+| Component | Version | Source |
 |-----------|---------|--------|
-| Python | 3.11+ | système |
+| Python | 3.11+ | system |
 | Hermes | latest | `/home/g33ky/.hermes` |
-| Stdlib only | — | pas de dépendances externes |
+| Stdlib only | — | no external dependencies |
 
 ---
 
-## 🤝 Contribution
+## 🤝 Contributing
 
-### Conventions de commit
+### Commit conventions
 
-| Préfixe | Usage |
-|---------|-------|
-| `feat:` | Nouvelle fonctionnalité |
-| `fix:`  | Correction |
+| Prefix | Usage |
+|--------|-------|
+| `feat:` | New feature |
+| `fix:`  | Fix |
 | `docs:` | Documentation |
 | `chore:`| Maintenance |
 
 ---
 
-## 📄 Licence
+## 📄 License
 
-Usage interne — Tous droits réservés.
+Internal use — All rights reserved.
 
 <div align="center">
   <sub>Composant de l’écosystème <strong>Hermes</strong> — Pytheas Infrastructure 🌿</sub>
